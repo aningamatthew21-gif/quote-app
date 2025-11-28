@@ -3,6 +3,7 @@ import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import Notification from '../components/common/Notification';
 import { logSystemActivity } from '../utils/logger';
+import TargetsSettings from '../components/settings/TargetsSettings';
 
 import { useActivityLog } from '../hooks/useActivityLog';
 import { useRealtimeInventory } from '../hooks/useRealtimeInventory';
@@ -32,7 +33,7 @@ const TaxSettings = ({ navigateTo, db, appId, userId, currentUser }) => {
     const [priceListSearch, setPriceListSearch] = useState('');
     // --- Exchange Rate Settings State ---
     const [rateMonth, setRateMonth] = useState(() => {
-        console.log('🗓️ [DEBUG] Initializing rateMonth state');
+
         const now = new Date();
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const value = `${now.getFullYear()}-${month}`;
@@ -897,6 +898,12 @@ const TaxSettings = ({ navigateTo, db, appId, userId, currentUser }) => {
                         Price List
                     </button>
                     <button
+                        onClick={() => setActiveTab('targets')}
+                        className={`py-2 px-4 font-medium text-sm rounded-t-lg whitespace-nowrap ${activeTab === 'targets' ? 'bg-white border-t border-l border-r border-gray-200 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        Revenue Targets
+                    </button>
+                    <button
                         onClick={() => setActiveTab('companyData')}
                         className={`py-2 px-4 font-medium text-sm rounded-t-lg whitespace-nowrap ${activeTab === 'companyData' ? 'bg-white border-t border-l border-r border-gray-200 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
                     >
@@ -1383,6 +1390,10 @@ const TaxSettings = ({ navigateTo, db, appId, userId, currentUser }) => {
                             </div>
                         </form>
                     </div>
+                )}
+
+                {activeTab === 'targets' && (
+                    <TargetsSettings appId={appId} />
                 )}
             </div>
         </div>

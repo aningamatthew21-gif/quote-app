@@ -8,7 +8,7 @@ export class AuthService {
     }
 
     async getUserByEmail(email) {
-        console.log('🔍 [DEBUG] AuthService: Getting user by email:', email);
+
         const userRef = doc(this.db, 'users', String(email).trim());
         const userSnap = await getDoc(userRef);
         if (!userSnap.exists()) {

@@ -48,20 +48,27 @@ export default function ReportModal({ appId, role = 'controller', onClose, db })
       const customersSnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/customers`));
       const customers = customersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // 3. Fetch Targets (Mock implementation for now, or fetch from DB)
-      // In a real scenario, we would fetch from `artifacts/${appId}/public/data/targets/${year}`
+      // 3. Fetch Targets
       const currentYear = new Date().getFullYear().toString();
-      const mockTargets = {
-        annualTarget: 150000, // Example annual target
-        monthlyTargets: {
-          '01': 10000, '02': 12000, '03': 15000, '04': 15000, '05': 18000, '06': 20000,
-          '07': 20000, '08': 22000, '09': 25000, '10': 25000, '11': 28000, '12': 30000
+      let fetchedTargets = null;
+      try {
+        const targetsRef = doc(db, `artifacts/${appId}/public/data/targets/${currentYear}`);
+        const targetsSnap = await getDoc(targetsRef);
+        if (targetsSnap.exists()) {
+          fetchedTargets = targetsSnap.data();
         }
+      } catch (err) {
+        console.warn('Failed to fetch targets, using defaults:', err);
+      }
+
+      const finalTargets = fetchedTargets || {
+        annualTarget: 0,
+        monthlyTargets: {}
       };
-      setTargets(mockTargets);
+      setTargets(finalTargets);
 
       // 4. Generate Report Data
-      const reportData = generateReportData(invoices, customers, role, includeLegacy, mockTargets);
+      const reportData = generateReportData(invoices, customers, role, includeLegacy, finalTargets);
       setReport(reportData);
 
     } catch (err) {

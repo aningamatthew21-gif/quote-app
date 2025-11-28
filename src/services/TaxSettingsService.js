@@ -63,15 +63,15 @@ class TaxSettingsService {
     try {
       // Check cache first
       if (!forceRefresh && this.cache && this.isCacheValid()) {
-        console.log('📊 [TaxSettings] Using cached tax settings');
+
         return this.cache;
       }
 
       console.log('📊 [TaxSettings] Fetching tax settings from database');
-      
+
       const docRef = db.collection(TAX_SETTINGS_COLLECTION).doc(TAX_SETTINGS_DOC);
       const doc = await docRef.get();
-      
+
       if (doc.exists) {
         const data = doc.data();
         this.cache = {
@@ -90,7 +90,7 @@ class TaxSettingsService {
         };
         await this.saveTaxSettings(this.cache);
       }
-      
+
       this.cacheTimestamp = Date.now();
       return this.cache;
     } catch (error) {
@@ -261,7 +261,7 @@ class TaxSettingsService {
    */
   validateTaxConfig(taxConfig) {
     const errors = [];
-    
+
     Object.entries(taxConfig).forEach(([key, config]) => {
       if (typeof config === 'object' && config !== null) {
         if (config.enabled && (config.rate < 0 || config.rate > 100)) {

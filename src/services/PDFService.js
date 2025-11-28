@@ -167,7 +167,7 @@ export class PDFService {
     static async generateInvoicePDF(invoiceData, appId = 'default-app-id') {
         // Fetch settings if not present
         if (!invoiceData.invoiceSettings) {
-            console.log('🔍 [DEBUG] PDFService: Fetching dynamic invoice settings...');
+
             const settings = await fetchInvoiceSettings(appId);
             if (settings) {
                 invoiceData.invoiceSettings = settings;
