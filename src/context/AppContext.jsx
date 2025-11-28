@@ -214,7 +214,26 @@ export const AppProvider = ({ children }) => {
                         navigate('salesDashboard');
                     }
                 } else {
-                    console.error('❌ [ERROR] User data not found');
+                    console.log('⚠️ [DEV] User data not found, creating new user...');
+                    try {
+                        const newUser = await authService.createUser(userEmail);
+
+                        // Sign in anonymously
+                        const credential = await signInAnonymously(auth);
+                        console.log('✅ [DEBUG] Signed in anonymously:', credential.user.uid);
+
+                        // Set app user
+                        setAppUser(newUser);
+                        setUserId(credential.user.uid);
+
+                        // Delete OTP
+                        await authService.deleteOtp(userEmail);
+
+                        // Navigate to sales dashboard by default
+                        navigate('salesDashboard');
+                    } catch (createError) {
+                        console.error('❌ [ERROR] Failed to create user:', createError);
+                    }
                 }
             } else {
                 console.error('❌ [ERROR] Invalid OTP');

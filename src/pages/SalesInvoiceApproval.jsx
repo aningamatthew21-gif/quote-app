@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, where, doc, writeBatch, getDocs } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import { formatCurrency } from '../utils/formatting';
@@ -20,6 +20,10 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     const [notification, setNotification] = useState(null);
     const [taxes, setTaxes] = useState([]);
     const [taxesLoading, setTaxesLoading] = useState(true);
+
+    // Filter State
+    const [selectedYear, setSelectedYear] = useState('All');
+    const [selectedMonth, setSelectedMonth] = useState('All');
 
     // Real-time invoices listener for pending approval invoices
     useEffect(() => {
@@ -95,7 +99,6 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
         const taxDocRef = doc(db, `artifacts/${appId}/public/data/settings`, 'taxes');
         const unsubscribe = onSnapshot(taxDocRef, (docSnap) => {
             if (docSnap.exists()) {
-                console.log("Taxessssss88", docSnap.data().taxArray);
                 setTaxes(docSnap.data().taxArray || []);
             } else {
                 setTaxes([]);
@@ -109,85 +112,36 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
         return () => unsubscribe();
     }, [db, appId]);
 
-    // Helper function to calculate totals dynamically (synchronized with InvoiceEditor)
-    const calculateDynamicTotals = (subtotalWithCharges, taxes, orderCharges = {}) => {
-        console.log('🧮 [DEBUG] SalesInvoiceApproval: calculateDynamicTotals called', {
-            subtotalWithCharges,
-            taxesCount: taxes.length,
-            orderCharges,
-            taxes: taxes.map(t => ({
-                id: t.id,
-                name: t.name,
-                rate: t.rate,
-                on: t.on,
-                enabled: t.enabled
-            }))
+    // Filter Logic
+    const filteredInvoices = useMemo(() => {
+        return invoices.filter(invoice => {
+            const date = getInvoiceDate(invoice);
+            const year = date.getFullYear().toString();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+
+            const yearMatch = selectedYear === 'All' || year === selectedYear;
+            const monthMatch = selectedMonth === 'All' || month === selectedMonth;
+
+            return yearMatch && monthMatch;
+        });
+    }, [invoices, selectedYear, selectedMonth]);
+
+    // Generate Filter Options
+    const { years, months } = useMemo(() => {
+        const uniqueYears = new Set();
+        const uniqueMonths = new Set();
+
+        invoices.forEach(invoice => {
+            const date = getInvoiceDate(invoice);
+            uniqueYears.add(date.getFullYear().toString());
+            uniqueMonths.add((date.getMonth() + 1).toString().padStart(2, '0'));
         });
 
-        const totals = {};
-
-        // Calculate base subtotal (without order charges)
-        const subtotal = subtotalWithCharges - (orderCharges.shipping || 0) - (orderCharges.handling || 0) + (orderCharges.discount || 0);
-        totals.subtotal = subtotal;
-
-        // Add order charges to result
-        totals.shipping = orderCharges.shipping || 0;
-        totals.handling = orderCharges.handling || 0;
-        totals.discount = orderCharges.discount || 0;
-        totals.subtotalWithCharges = subtotalWithCharges;
-
-        let levyTotal = subtotalWithCharges;
-
-        // Apply taxes to subtotal with charges (NHIL, GETFund, etc.)
-        const subtotalTaxes = taxes.filter(t => t.on === 'subtotal' && t.enabled);
-        console.log('📊 [DEBUG] SalesInvoiceApproval: Subtotal taxes', {
-            count: subtotalTaxes.length,
-            taxes: subtotalTaxes.map(t => ({ id: t.id, name: t.name, rate: t.rate }))
-        });
-
-        subtotalTaxes.forEach(t => {
-            const taxAmount = subtotalWithCharges * (t.rate / 100);
-            totals[t.id] = taxAmount;
-            totals[`${t.id}_rate`] = t.rate; // Store the rate too
-            levyTotal += taxAmount;
-            console.log('💰 [DEBUG] SalesInvoiceApproval: Subtotal tax calculation', {
-                taxId: t.id,
-                taxName: t.name,
-                rate: t.rate,
-                taxAmount,
-                levyTotalAfter: levyTotal
-            });
-        });
-
-        totals.levyTotal = levyTotal;
-
-        // Apply taxes to levy total (VAT, COVID-19 Levy, etc.)
-        const levyTaxes = taxes.filter(t => t.on === 'levyTotal' && t.enabled);
-        console.log('📊 [DEBUG] SalesInvoiceApproval: Levy taxes', {
-            count: levyTaxes.length,
-            taxes: levyTaxes.map(t => ({ id: t.id, name: t.name, rate: t.rate }))
-        });
-
-        let grandTotal = levyTotal;
-        levyTaxes.forEach(t => {
-            const taxAmount = levyTotal * (t.rate / 100);
-            totals[t.id] = taxAmount;
-            totals[`${t.id}_rate`] = t.rate; // Store the rate too
-            grandTotal += taxAmount;
-            console.log('💰 [DEBUG] SalesInvoiceApproval: Levy tax calculation', {
-                taxId: t.id,
-                taxName: t.name,
-                rate: t.rate,
-                taxAmount,
-                grandTotalAfter: grandTotal
-            });
-        });
-
-        totals.grandTotal = grandTotal;
-
-        console.log('✅ [DEBUG] SalesInvoiceApproval: Final calculated totals', { totals });
-        return totals;
-    };
+        return {
+            years: Array.from(uniqueYears).sort().reverse(),
+            months: Array.from(uniqueMonths).sort()
+        };
+    }, [invoices]);
 
     const handleApproval = async (invoiceId, newStatus) => {
         console.log('🔍 [DEBUG] SalesInvoiceApproval: handleApproval called', {
@@ -404,6 +358,36 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
+                                {/* Filters */}
+                                <div className="flex gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+                                        <select
+                                            value={selectedYear}
+                                            onChange={(e) => setSelectedYear(e.target.value)}
+                                            className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                        >
+                                            <option value="All">All Years</option>
+                                            {years.map(year => (
+                                                <option key={year} value={year}>{year}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Month</label>
+                                        <select
+                                            value={selectedMonth}
+                                            onChange={(e) => setSelectedMonth(e.target.value)}
+                                            className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                                        >
+                                            <option value="All">All Months</option>
+                                            {months.map(month => (
+                                                <option key={month} value={month}>{month}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
                                 <table className="min-w-full divide-y divide-gray-200">
                                     <thead className="bg-gray-50">
                                         <tr>
@@ -416,7 +400,7 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-200">
-                                        {invoices.map(invoice => {
+                                        {filteredInvoices.map(invoice => {
                                             console.log('🔍 [DEBUG] SalesInvoiceApproval: Processing invoice for table', {
                                                 invoiceId: invoice.id,
                                                 hasItems: !!invoice.items,
@@ -435,7 +419,9 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
 
                                             return (
                                                 <tr key={invoice.id}>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{invoice.id}</td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                        {invoice.approvedInvoiceId || invoice.id}
+                                                    </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{invoice.customerName}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{invoice.date}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatRowAmount(displayTotal, invoice.currency)}</td>

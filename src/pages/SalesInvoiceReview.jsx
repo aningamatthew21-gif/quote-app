@@ -3,6 +3,7 @@ import { doc, onSnapshot, collection, getDocs, writeBatch } from 'firebase/fires
 import Icon from '../components/common/Icon';
 import { formatCurrency } from '../utils/formatting';
 import { logInvoiceActivity } from '../utils/logger';
+import { generatePermanentId, getNextSequenceNumber } from '../utils/helpers';
 
 const SalesInvoiceReview = ({ navigateTo, db, appId, userId, pageContext }) => {
     const [invoice, setInvoice] = useState(null);
@@ -266,12 +267,9 @@ const SalesInvoiceReview = ({ navigateTo, db, appId, userId, pageContext }) => {
                     signatureSize: selectedSignature.signatureUrl?.length,
                     taxConfigCount: taxes.length
                 });
-            }
 
-            batch.update(invoiceRef, updateData);
-
-            // If approving, adjust stock levels
-            if (newStatus === 'Approved' && invoice) {
+                // Generate Permanent ID
+                const sequence = await getNextSequenceNumber(db, appId);
                 // Load inventory to get current stock levels
                 const inventorySnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/inventory`));
                 const inventory = {};

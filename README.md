@@ -1,12 +1,75 @@
-# React + Vite
+# Project Quote Application
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A comprehensive quoting and invoice management system built with React, Vite, and Firebase.
 
-Currently, two official plugins are available:
+## 🚀 Quick Start (Developers)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+### Prerequisites
 
-## Expanding the ESLint configuration
+*   Node.js (v18 or higher)
+*   npm (v9 or higher)
+*   Git
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### Installation
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository-url>
+    cd pq
+    ```
+
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
+
+3.  **Set up Environment Variables:**
+    Create a `.env` file in the root directory (if not already present) and add your Firebase config:
+    ```env
+    VITE_FIREBASE_API_KEY=your_api_key
+    VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
+    VITE_FIREBASE_PROJECT_ID=your_project_id
+    # ... other firebase config
+    ```
+
+4.  **Run the development server:**
+    ```bash
+    npm run dev
+    ```
+    The app will be available at `http://localhost:5173`.
+
+## 📚 Documentation
+
+*   [**Quick Start Guide**](docs/QUICK_START.md): For end users.
+*   [**Release Notes**](docs/RELEASE_NOTES.md): Version history and changelog.
+*   [**Architecture Overview**](docs/ARCHITECTURE.md): System design and components.
+*   [**Privacy Policy**](docs/PRIVACY_POLICY.md): Data handling practices.
+*   [**EULA**](docs/EULA.md): End-User License Agreement.
+
+## 🛠️ Build & Deploy
+
+### Build for Production
+
+```bash
+npm run build
+```
+This will generate the production-ready files in the `dist` directory.
+
+### Preview Production Build
+
+```bash
+npm run preview
+```
+
+## 🧪 Testing
+
+(Add testing instructions here, e.g., `npm run test`)
+
+## 🤝 Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+

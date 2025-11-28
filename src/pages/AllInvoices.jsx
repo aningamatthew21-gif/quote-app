@@ -28,6 +28,10 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(true);
 
+    // Filter State
+    const [selectedYear, setSelectedYear] = useState('All');
+    const [selectedMonth, setSelectedMonth] = useState('All');
+
     useEffect(() => {
         if (!db) return;
 
@@ -118,8 +122,37 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
             );
         }
 
+        // Apply year and month filters
+        filtered = filtered.filter(invoice => {
+            const date = getInvoiceDate(invoice);
+            const year = date.getFullYear().toString();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+
+            const yearMatch = selectedYear === 'All' || year === selectedYear;
+            const monthMatch = selectedMonth === 'All' || month === selectedMonth;
+
+            return yearMatch && monthMatch;
+        });
+
         return filtered;
-    }, [invoices, debouncedSearchTerm, pageContext]);
+    }, [invoices, debouncedSearchTerm, pageContext, selectedYear, selectedMonth]);
+
+    // Generate Filter Options
+    const { years, months } = useMemo(() => {
+        const uniqueYears = new Set();
+        const uniqueMonths = new Set();
+
+        invoices.forEach(invoice => {
+            const date = getInvoiceDate(invoice);
+            uniqueYears.add(date.getFullYear().toString());
+            uniqueMonths.add((date.getMonth() + 1).toString().padStart(2, '0'));
+        });
+
+        return {
+            years: Array.from(uniqueYears).sort().reverse(),
+            months: Array.from(uniqueMonths).sort()
+        };
+    }, [invoices]);
 
     return (
         <div className="min-h-screen bg-gray-100">
@@ -135,6 +168,36 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                     <button onClick={() => navigateTo('controllerDashboard')} className="text-sm"><Icon id="arrow-left" className="mr-1" /> Back to Dashboard</button>
                 </header>
                 <div className="bg-white p-6 rounded-xl shadow-md">
+                    {/* Filters */}
+                    <div className="flex gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+                            <select
+                                value={selectedYear}
+                                onChange={(e) => setSelectedYear(e.target.value)}
+                                className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                            >
+                                <option value="All">All Years</option>
+                                {years.map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Month</label>
+                            <select
+                                value={selectedMonth}
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                            >
+                                <option value="All">All Months</option>
+                                {months.map(month => (
+                                    <option key={month} value={month}>{month}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
                     <div className="mb-4">
                         <input
                             type="text"
@@ -179,7 +242,7 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                                 ) : (
                                     filteredInvoices.map(inv => (
                                         <tr key={inv.id} className="border-b hover:bg-gray-50">
-                                            <td className="p-3 font-medium">{inv.id}</td>
+                                            <td className="p-3 font-medium">{inv.approvedInvoiceId || inv.id}</td>
                                             <td className="p-3">{inv.customerName}</td>
                                             <td className="p-3">{inv.date}</td>
                                             <td className="p-3 text-right">{formatCurrency(inv.total)}</td>

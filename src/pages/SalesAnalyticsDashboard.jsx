@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis } from 'recharts';
 import Icon from '../components/common/Icon';
+import ReportModal from '../components/ReportModal';
 import { formatCurrency } from '../utils/formatting';
 
 const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) => {
@@ -199,6 +200,16 @@ const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) =
                     </div>
                 </div>
             </div>
+
+            {/* Report Modal */}
+            {openReport && (
+                <ReportModal
+                    appId={appId}
+                    role="sales"
+                    onClose={() => setOpenReport(false)}
+                    db={db}
+                />
+            )}
         </div>
     );
 };

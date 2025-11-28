@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { collection, onSnapshot, doc, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDocs, setDoc, serverTimestamp } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import PreviewModal from '../components/PreviewModal';
 import QuantityModal from '../components/modals/QuantityModal';
@@ -9,6 +9,7 @@ import EnhancedAIService from '../services/EnhancedAIService';
 import AIQuoteAssistant from '../services/AIQuoteAssistant';
 import NLPService from '../services/NLPService';
 import companyLogo from '../assets/company-logo.png';
+import { generateTemporaryId } from '../utils/helpers';
 
 const QuotingModule = ({ navigateTo, db, appId, userId }) => {
     const [notification, setNotification] = useState(null);
@@ -398,9 +399,10 @@ const QuotingModule = ({ navigateTo, db, appId, userId }) => {
     const handleSubmitForApproval = async () => {
         if (!db || !appId || !userId) return;
         try {
-            const invoiceData = { invoiceNumber: generateInvoiceNumber(), customerId: selectedCustomer.id, customerName: selectedCustomer.name, customerEmail: selectedCustomer.email || '', date: new Date().toLocaleDateString(), timestamp: serverTimestamp(), dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(), status: 'Pending Approval', items: quoteItems, subtotal: totals.subtotal, taxes: taxes, taxConfiguration: taxes, orderCharges: orderCharges, totals: totals, total: totals.grandTotal, currency: quoteCurrency, exchangeRate: fxRateGhsPerUsd, createdBy: userId };
-            const docRef = await addDoc(collection(db, `artifacts/${appId}/public/data/invoices`), invoiceData);
-            await logQuoteActivity(db, appId, userId, 'Create Quote', { id: docRef.id, customerName: selectedCustomer.name, amount: totals.grandTotal });
+            const tempId = generateTemporaryId();
+            const invoiceData = { id: tempId, invoiceNumber: tempId, customerId: selectedCustomer.id, customerName: selectedCustomer.name, customerEmail: selectedCustomer.email || '', date: new Date().toLocaleDateString(), timestamp: serverTimestamp(), dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(), status: 'Pending Approval', items: quoteItems, subtotal: totals.subtotal, taxes: taxes, taxConfiguration: taxes, orderCharges: orderCharges, totals: totals, total: totals.grandTotal, currency: quoteCurrency, exchangeRate: fxRateGhsPerUsd, createdBy: userId };
+            await setDoc(doc(db, `artifacts/${appId}/public/data/invoices`, tempId), invoiceData);
+            await logQuoteActivity(db, appId, userId, 'Create Quote', { id: tempId, customerName: selectedCustomer.name, amount: totals.grandTotal });
             setNotification({ type: 'success', message: 'Quote submitted for approval successfully!' });
             setQuoteItems([]); setSelectedCustomer(null); setCustomerSearch(''); setOrderCharges({ shipping: 0, handling: 0, discount: 0 });
             setTimeout(() => setNotification(null), 3000);

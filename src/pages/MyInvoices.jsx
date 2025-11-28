@@ -15,6 +15,10 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
     const [taxesData, setTaxesData] = useState([]);
     const [taxesLoading, setTaxesLoading] = useState(true);
 
+    // Filter State
+    const [selectedYear, setSelectedYear] = useState('All');
+    const [selectedMonth, setSelectedMonth] = useState('All');
+
     // Real-time invoices listener for salesperson
     useEffect(() => {
         if (!db || !appId || !userId) return;
@@ -99,11 +103,40 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
     }, [taxesData]);
 
     const filteredInvoices = useMemo(() => {
+        let result = myInvoices;
+
         if (pageContext?.status) {
-            return myInvoices.filter(inv => inv.status === pageContext.status);
+            result = result.filter(inv => inv.status === pageContext.status);
         }
-        return myInvoices;
-    }, [myInvoices, pageContext]);
+
+        return result.filter(invoice => {
+            const date = getInvoiceDate(invoice);
+            const year = date.getFullYear().toString();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+
+            const yearMatch = selectedYear === 'All' || year === selectedYear;
+            const monthMatch = selectedMonth === 'All' || month === selectedMonth;
+
+            return yearMatch && monthMatch;
+        });
+    }, [myInvoices, pageContext, selectedYear, selectedMonth]);
+
+    // Generate Filter Options
+    const { years, months } = useMemo(() => {
+        const uniqueYears = new Set();
+        const uniqueMonths = new Set();
+
+        myInvoices.forEach(invoice => {
+            const date = getInvoiceDate(invoice);
+            uniqueYears.add(date.getFullYear().toString());
+            uniqueMonths.add((date.getMonth() + 1).toString().padStart(2, '0'));
+        });
+
+        return {
+            years: Array.from(uniqueYears).sort().reverse(),
+            months: Array.from(uniqueMonths).sort()
+        };
+    }, [myInvoices]);
 
     const handleShowPreview = async (invoice) => {
         try {
@@ -555,6 +588,36 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                     <button onClick={() => navigateTo('salesDashboard')} className="text-sm"><Icon id="arrow-left" className="mr-1" /> Back to Dashboard</button>
                 </header>
                 <div className="bg-white p-6 rounded-xl shadow-md">
+                    {/* Filters */}
+                    <div className="flex gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+                            <select
+                                value={selectedYear}
+                                onChange={(e) => setSelectedYear(e.target.value)}
+                                className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                            >
+                                <option value="All">All Years</option>
+                                {years.map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Month</label>
+                            <select
+                                value={selectedMonth}
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                            >
+                                <option value="All">All Months</option>
+                                {months.map(month => (
+                                    <option key={month} value={month}>{month}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-gray-50">
@@ -570,7 +633,7 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                             <tbody>
                                 {filteredInvoices.map(inv => (
                                     <tr key={inv.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-3 font-medium">{inv.invoiceNumber || inv.id}</td>
+                                        <td className="p-3 font-medium">{inv.approvedInvoiceId || inv.id}</td>
                                         <td className="p-3">{inv.customerName}</td>
                                         <td className="p-3">{inv.date}</td>
                                         <td className="p-3 text-right">

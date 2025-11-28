@@ -20,6 +20,21 @@ export class AuthService {
         return data;
     }
 
+    async createUser(email, role = 'sales') {
+        console.log('📝 [DEBUG] AuthService: Creating new user:', email);
+        const userRef = doc(this.db, 'users', String(email).trim());
+        const newUser = {
+            email: String(email).trim(),
+            role: role,
+            createdAt: new Date().toISOString(),
+            name: String(email).split('@')[0],
+            status: 'active'
+        };
+        await setDoc(userRef, newUser);
+        console.log('✅ [DEBUG] AuthService: User created successfully');
+        return newUser;
+    }
+
     async validateOtp(email, otp) {
         const otpRef = doc(this.db, 'otps', String(email).trim());
         const otpSnap = await getDoc(otpRef);
@@ -42,12 +57,13 @@ export class AuthService {
     async sendOtp(email) {
         const passcode = await this.generateOtp(email);
         console.log('🔍 [DEBUG] AuthService: Sending OTP to email:', email);
-        await emailjs.send(
-            "service_9vyihng",
-            "template_ec3cg56",
-            { passcode, email },
-            "yqjG5KtoapsXlV6Pj"
-        );
+        console.log('🔒 [DEV MODE] OTP generated:', passcode);
+        // await emailjs.send(
+        //     "service_9vyihng",
+        //     "template_ec3cg56",
+        //     { passcode, email },
+        //     "yqjG5KtoapsXlV6Pj"
+        // );
         return passcode;
     }
 
