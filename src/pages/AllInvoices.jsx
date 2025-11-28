@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { where } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import { formatCurrency } from '../utils/formatting';
 import { useDebounce } from '../hooks/useDebounce';
 import { useActivityLog } from '../hooks/useActivityLog';
-import { getInvoiceDate } from '../utils/helpers';
+import { usePagination } from '../hooks/usePagination';
 
 const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
     const [searchTerm, setSearchTerm] = useState("");
-    const debouncedSearchTerm = useDebounce(searchTerm, 1000); // Increased delay for logging
+    const debouncedSearchTerm = useDebounce(searchTerm, 1000);
 
     // Logging
     const { log } = useActivityLog();
@@ -24,59 +24,45 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
         }
     }, [debouncedSearchTerm, log]);
 
-    // Use onSnapshot without ordering to avoid index requirement
-    const [invoices, setInvoices] = useState([]);
-    const [loading, setLoading] = useState(true);
-
     // Filter State
     const [selectedYear, setSelectedYear] = useState('All');
     const [selectedMonth, setSelectedMonth] = useState('All');
 
-    useEffect(() => {
-        if (!db) return;
+    // Construct Query Constraints for Server-Side Filtering
+    const queryConstraints = useMemo(() => {
+        const constraints = [];
 
-        const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/invoices`), (snapshot) => {
-            const invoiceData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Date Filtering
+        if (selectedYear !== 'All') {
+            let startDate, endDate;
 
-            // Sort client-side by timestamp for true newest-to-oldest order
-            const sortedInvoices = [...invoiceData].sort((a, b) => {
-                const dateA = getInvoiceDate(a);
-                const dateB = getInvoiceDate(b);
-                return dateB - dateA; // Newest first
-            });
+            if (selectedMonth !== 'All') {
+                // Specific Month in Year
+                startDate = `${selectedYear}-${selectedMonth}-01`;
+                // Calculate last day of month
+                const lastDay = new Date(selectedYear, parseInt(selectedMonth), 0).getDate();
+                endDate = `${selectedYear}-${selectedMonth}-${lastDay}`;
+            } else {
+                // Whole Year
+                startDate = `${selectedYear}-01-01`;
+                endDate = `${selectedYear}-12-31`;
+            }
 
-            console.log('📅 [DEBUG] AllInvoices: Enhanced timestamp sorting applied', {
-                totalInvoices: invoiceData.length,
-                firstInvoice: {
-                    id: sortedInvoices[0]?.id,
-                    date: sortedInvoices[0]?.date,
-                    createdAt: sortedInvoices[0]?.createdAt,
-                    timestamp: sortedInvoices[0]?.timestamp
-                },
-                lastInvoice: {
-                    id: sortedInvoices[sortedInvoices.length - 1]?.id,
-                    date: sortedInvoices[sortedInvoices.length - 1]?.date,
-                    createdAt: sortedInvoices[sortedInvoices.length - 1]?.createdAt,
-                    timestamp: sortedInvoices[sortedInvoices.length - 1]?.timestamp
-                },
-                sortOrder: 'newest to oldest (by timestamp)'
-            });
+            constraints.push(where('date', '>=', startDate));
+            constraints.push(where('date', '<=', endDate));
+        }
 
-            setInvoices(sortedInvoices);
-            setLoading(false);
-        }, (error) => {
-            setLoading(false);
-        });
+        return constraints;
+    }, [selectedYear, selectedMonth]);
 
-        return () => unsub();
-    }, [db, appId]);
+    // Use Pagination Hook
+    const { data: invoices, loading, hasMore, loadMore, error } = usePagination(
+        db,
+        `artifacts/${appId}/public/data/invoices`,
+        queryConstraints
+    );
 
-    // Debug logging removed for production
 
-    const handleUpdateStatus = async (invoiceId, status) => {
-        const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoiceId);
-        await updateDoc(invoiceRef, { status });
-    };
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -88,6 +74,8 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
         }
     };
 
+    // Client-side filtering for Search Term and Aging (on loaded data)
+    // Note: Ideally search should be server-side too, but Firestore lacks full-text search.
     const filteredInvoices = useMemo(() => {
         let filtered = invoices;
 
@@ -118,41 +106,16 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
         if (debouncedSearchTerm) {
             filtered = filtered.filter(inv =>
                 inv.id.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-                inv.customerName.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
+                (inv.customerName && inv.customerName.toLowerCase().includes(debouncedSearchTerm.toLowerCase()))
             );
         }
 
-        // Apply year and month filters
-        filtered = filtered.filter(invoice => {
-            const date = getInvoiceDate(invoice);
-            const year = date.getFullYear().toString();
-            const month = (date.getMonth() + 1).toString().padStart(2, '0');
-
-            const yearMatch = selectedYear === 'All' || year === selectedYear;
-            const monthMatch = selectedMonth === 'All' || month === selectedMonth;
-
-            return yearMatch && monthMatch;
-        });
-
         return filtered;
-    }, [invoices, debouncedSearchTerm, pageContext, selectedYear, selectedMonth]);
+    }, [invoices, debouncedSearchTerm, pageContext]);
 
-    // Generate Filter Options
-    const { years, months } = useMemo(() => {
-        const uniqueYears = new Set();
-        const uniqueMonths = new Set();
-
-        invoices.forEach(invoice => {
-            const date = getInvoiceDate(invoice);
-            uniqueYears.add(date.getFullYear().toString());
-            uniqueMonths.add((date.getMonth() + 1).toString().padStart(2, '0'));
-        });
-
-        return {
-            years: Array.from(uniqueYears).sort().reverse(),
-            months: Array.from(uniqueMonths).sort()
-        };
-    }, [invoices]);
+    // Static Filter Options (since we don't have all data loaded)
+    const years = ['2023', '2024', '2025', '2026'];
+    const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
 
     return (
         <div className="min-h-screen bg-gray-100">
@@ -162,7 +125,7 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                         <h1 className="text-2xl font-bold text-gray-800">All Invoices {pageContext?.aging && `(${pageContext.aging})`}</h1>
                         <div className="flex items-center text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
                             <Icon id="clock" className="w-4 h-4 mr-1" />
-                            Sorted: Newest to Oldest (by Timestamp)
+                            Sorted: Newest to Oldest
                         </div>
                     </div>
                     <button onClick={() => navigateTo('controllerDashboard')} className="text-sm"><Icon id="arrow-left" className="mr-1" /> Back to Dashboard</button>
@@ -207,6 +170,14 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                             className="w-full p-2 border rounded-md"
                         />
                     </div>
+
+                    {error && (
+                        <div className="bg-red-50 text-red-600 p-3 rounded-md mb-4">
+                            Error loading invoices: {error}
+                            {error.includes('index') && <p className="text-sm mt-1">An index is required for this query. Check the browser console for the creation link.</p>}
+                        </div>
+                    )}
+
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead className="bg-gray-50">
@@ -217,7 +188,6 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                                         <div className="flex items-center justify-center">
                                             Date & Time
                                             <Icon id="arrow-down" className="w-4 h-4 ml-1 text-blue-600" />
-                                            <span className="text-xs text-blue-600 ml-1">Newest</span>
                                         </div>
                                     </th>
                                     <th className="p-3 font-semibold text-right">Amount</th>
@@ -226,7 +196,7 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {loading ? (
+                                {loading && invoices.length === 0 ? (
                                     <tr>
                                         <td colSpan="6" className="p-8 text-center text-gray-600">
                                             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -264,10 +234,27 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                             </tbody>
                         </table>
                     </div>
+
+                    {/* Load More Button */}
+                    {hasMore && !loading && (
+                        <div className="mt-6 text-center">
+                            <button
+                                onClick={() => loadMore()}
+                                className="px-6 py-2 bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 font-medium transition-colors"
+                            >
+                                Load More Invoices
+                            </button>
+                        </div>
+                    )}
+
+                    {loading && invoices.length > 0 && (
+                        <div className="mt-4 text-center text-gray-500">
+                            Loading more...
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
-
     );
 };
 

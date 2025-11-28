@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import Icon from '../components/common/Icon';
 import ReportModal from '../components/ReportModal';
@@ -23,7 +23,7 @@ const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, user
         if (!db || !appId) return;
 
         const unsubscribe = onSnapshot(
-            collection(db, `artifacts/${appId}/public/data/invoices`),
+            query(collection(db, `artifacts/${appId}/public/data/invoices`), where("status", "==", "Approved")),
             (snapshot) => {
                 const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 setInvoices(result);
@@ -81,12 +81,7 @@ const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, user
         return { invoiceData, inventoryHealthData };
     }, [invoices, inventory]);
 
-    const handleAgingBarClick = (data) => {
-        if (data && data.activePayload && data.activePayload[0]) {
-            const bucketName = data.activePayload[0].payload.name;
-            navigateTo('invoices', { aging: bucketName });
-        }
-    };
+
 
     return (
         <div className="min-h-screen bg-gray-100">

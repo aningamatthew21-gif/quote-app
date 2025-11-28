@@ -18,8 +18,7 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     const [signaturesLoading, setSignaturesLoading] = useState(true);
     const [selectedSignature, setSelectedSignature] = useState(null);
     const [notification, setNotification] = useState(null);
-    const [taxes, setTaxes] = useState([]);
-    const [taxesLoading, setTaxesLoading] = useState(true);
+
 
     // Filter State
     const [selectedYear, setSelectedYear] = useState('All');
@@ -92,25 +91,7 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
         return () => unsubscribe();
     }, [db, appId]);
 
-    // Load tax configuration
-    useEffect(() => {
-        if (!db || !appId) return;
 
-        const taxDocRef = doc(db, `artifacts/${appId}/public/data/settings`, 'taxes');
-        const unsubscribe = onSnapshot(taxDocRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setTaxes(docSnap.data().taxArray || []);
-            } else {
-                setTaxes([]);
-            }
-            setTaxesLoading(false);
-        }, (err) => {
-            console.error('Error fetching taxes:', err);
-            setTaxesLoading(false);
-        });
-
-        return () => unsubscribe();
-    }, [db, appId]);
 
     // Filter Logic
     const filteredInvoices = useMemo(() => {
@@ -228,6 +209,9 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
 
             await batch.commit();
 
+            // Optimistic UI Update: Remove the approved/rejected invoice from the list immediately
+            setInvoices(prevInvoices => prevInvoices.filter(inv => inv.id !== invoiceId));
+
             await logInvoiceActivity(db, appId, userId, newStatus === 'Approved' ? 'Approved' : 'Rejected', invoice, {
                 statusBefore: 'Pending Approval',
                 statusAfter: newStatus,
@@ -243,19 +227,16 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
             console.log('✅ [DEBUG] SalesInvoiceApproval: Approval process completed successfully');
         } catch (error) {
             console.error('❌ [ERROR] SalesInvoiceApproval: handleApproval failed:', error);
-            setNotification({ type: 'error', message: `Failed to ${newStatus.toLowerCase()} invoice: ${error.message}` });
+            setNotification({
+                type: 'error',
+                message: `Failed to ${newStatus.toLowerCase()} invoice. Error: ${error.code || error.message || 'Unknown error'}`
+            });
+
+            // Re-fetch or revert state if needed, but onSnapshot should handle consistency eventually.
         }
     };
 
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'Paid': return 'bg-green-100 text-green-800';
-            case 'Approved': return 'bg-blue-100 text-blue-800';
-            case 'Pending Approval': return 'bg-yellow-100 text-yellow-800';
-            case 'Rejected': return 'bg-red-100 text-red-800';
-            default: return 'bg-gray-100 text-gray-800';
-        }
-    };
+
 
     const formatRowAmount = (amount, currency) => {
         try {

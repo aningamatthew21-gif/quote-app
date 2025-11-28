@@ -4,8 +4,7 @@ import Icon from '../components/common/Icon';
 import Notification from '../components/common/Notification';
 import QuantityModal from '../components/modals/QuantityModal';
 import ConfirmationModal from '../components/modals/ConfirmationModal';
-import { logQuoteActivity, logInvoiceActivity } from '../utils/logger';
-import { formatCurrency } from '../utils/formatting';
+import { logInvoiceActivity } from '../utils/logger';
 
 const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
     const { invoiceId } = pageContext;
@@ -74,6 +73,8 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
     const [addingItem, setAddingItem] = useState(null);
     const [removingItem, setRemovingItem] = useState(null);
 
+
+
     // Signature selection state
     const [signatures, setSignatures] = useState([]);
     const [selectedSignature, setSelectedSignature] = useState(null);
@@ -81,30 +82,16 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
 
     // Currency State
     const [currency, setCurrency] = useState('GHS');
-    const [fxMonthKey, setFxMonthKey] = useState(() => {
+    const [fxMonthKey] = useState(() => {
         const now = new Date();
         const m = String(now.getMonth() + 1).padStart(2, '0');
         return `${now.getFullYear()}-${m}`;
     });
     const [fxRateGhsPerUsd, setFxRateGhsPerUsd] = useState(null);
-    const [fxLoading, setFxLoading] = useState(true);
-    const [invoiceSettings, setInvoiceSettings] = useState(null);
 
-    // Fetch Invoice Settings
-    useEffect(() => {
-        const fetchSettings = async () => {
-            try {
-                const settingsRef = doc(db, `artifacts/${appId}/public/data/settings`, 'invoice');
-                const settingsSnap = await getDoc(settingsRef);
-                if (settingsSnap.exists()) {
-                    setInvoiceSettings(settingsSnap.data());
-                }
-            } catch (error) {
-                console.error("Error fetching invoice settings:", error);
-            }
-        };
-        fetchSettings();
-    }, [db, appId]);
+
+
+
 
     // Real-time invoice data listener
     useEffect(() => {
@@ -174,7 +161,7 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
         const ratesRef = doc(db, `artifacts/${appId}/public/data/settings`, 'exchangeRates');
 
         const unsubscribe = onSnapshot(ratesRef, (snap) => {
-            setFxLoading(false);
+
             if (snap.exists()) {
                 const data = snap.data();
                 const list = Array.isArray(data.rates) ? data.rates : [];
@@ -213,6 +200,8 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
     };
 
     const filteredInventory = useMemo(() => inventory.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.id.toLowerCase().includes(searchTerm.toLowerCase())), [inventory, searchTerm]);
+
+
 
     const totals = useMemo(() => {
         if (!taxes) return {};
@@ -303,6 +292,8 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
         setRemovingItem(null);
     };
 
+
+
     const handleApproval = async (newStatus) => {
         try {
             // Validate signature selection for approval
@@ -314,7 +305,19 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
             const batch = writeBatch(db);
             const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoiceId);
 
+            const updateData = {
+                status: newStatus,
+            };
+
             if (newStatus === 'Approved') {
+                if (selectedSignature) {
+                    updateData.controllerSignature = selectedSignature.signatureUrl;
+                    updateData.controllerName = selectedSignature.controllerName;
+                    updateData.controllerSubsidiary = selectedSignature.subsidiary;
+                    updateData.signatureTimestamp = new Date().toISOString();
+                    updateData.approvedBy = userId;
+                }
+
                 quoteItems.forEach(item => {
                     const inventoryItem = inventory.find(invItem => invItem.id === item.id);
                     if (inventoryItem) {
@@ -324,6 +327,8 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
                     }
                 });
             }
+
+            batch.update(invoiceRef, updateData);
 
             await batch.commit();
 
@@ -377,7 +382,6 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
                     <div className="lg:col-span-3 bg-white p-6 rounded-xl shadow-md">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xl font-semibold text-gray-700">Invoice Details for: <span className="text-blue-600">{selectedCustomer?.name}</span></h2>
-
                         </div>
 
                         {/* Line Items Table */}
