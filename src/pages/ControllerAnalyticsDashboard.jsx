@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import Icon from '../components/common/Icon';
 import ReportModal from '../components/ReportModal';
 import { formatCurrency } from '../utils/formatting';
+import { getInvoiceDate } from '../utils/helpers';
 
 const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, userEmail }) => {
     const [openReport, setOpenReport] = useState(false);
@@ -61,10 +62,15 @@ const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, user
         // Invoice Statistics (Approved only)
         const monthlyData = {};
         invoices.filter(inv => inv.status === 'Approved').forEach(inv => {
-            const month = inv.date.substring(0, 7); // YYYY-MM
-            if (!monthlyData[month]) monthlyData[month] = { name: month, count: 0, total: 0 };
-            monthlyData[month].count += 1;
-            monthlyData[month].total += inv.total || inv.totals?.grandTotal || inv.totals?.subtotal || 0;
+            const date = getInvoiceDate(inv);
+            // Format as YYYY-MM for consistent sorting and grouping
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const key = `${year}-${month}`;
+
+            if (!monthlyData[key]) monthlyData[key] = { name: key, count: 0, total: 0 };
+            monthlyData[key].count += 1;
+            monthlyData[key].total += inv.total || inv.totals?.grandTotal || inv.totals?.subtotal || 0;
         });
         const invoiceData = Object.values(monthlyData).sort((a, b) => a.name.localeCompare(b.name));
 

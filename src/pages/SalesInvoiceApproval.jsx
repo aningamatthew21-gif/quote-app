@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where, doc, writeBatch, getDocs } from '
 import Icon from '../components/common/Icon';
 import { formatCurrency } from '../utils/formatting';
 import { logInvoiceActivity } from '../utils/logger';
+import { getInvoiceDate } from '../utils/helpers';
 import { useApp } from '../context/AppContext';
 
 const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
@@ -48,7 +49,12 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                         totals: inv.totals
                     }))
                 });
-                setInvoices(result);
+                const sortedResult = result.sort((a, b) => {
+                    const dateA = getInvoiceDate(a);
+                    const dateB = getInvoiceDate(b);
+                    return dateB - dateA; // Newest first
+                });
+                setInvoices(sortedResult);
                 setIsLoading(false);
                 setError(null);
             },

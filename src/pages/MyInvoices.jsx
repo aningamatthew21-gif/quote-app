@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where, getDoc, doc } from 'firebase/fire
 import Icon from '../components/common/Icon';
 import PreviewModal from '../components/PreviewModal';
 import { useActivityLog } from '../hooks/useActivityLog';
+import { getInvoiceDate } from '../utils/helpers';
 
 const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
     const { log } = useActivityLog();
@@ -25,23 +26,9 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
 
                 // Sort by timestamp for true newest-to-oldest order (same as AllInvoices)
                 const sortedInvoices = [...result].sort((a, b) => {
-                    // Use multiple timestamp fields for accurate sorting
-                    const timestampA = a.createdAt || a.timestamp || a.date || a.id;
-                    const timestampB = b.createdAt || b.timestamp || b.date || b.id;
-
-                    // Convert to Date objects for comparison
-                    const dateA = new Date(timestampA || 0);
-                    const dateB = new Date(timestampB || 0);
-
-                    // If dates are equal, sort by invoice ID (which contains timestamp)
-                    if (dateA.getTime() === dateB.getTime()) {
-                        // Extract timestamp from invoice ID (INV-2025-56275 format)
-                        const idA = a.id || '';
-                        const idB = b.id || '';
-                        return idB.localeCompare(idA); // Newer ID first
-                    }
-
-                    return dateB - dateA; // Descending order (newest first)
+                    const dateA = getInvoiceDate(a);
+                    const dateB = getInvoiceDate(b);
+                    return dateB - dateA; // Newest first
                 });
 
                 console.log('📅 [DEBUG] MyInvoices: Enhanced timestamp sorting applied', {
