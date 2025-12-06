@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, where, getDoc, doc, updateDoc, arrayUnion, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, getDoc, doc, updateDoc, arrayUnion, writeBatch, increment } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import PreviewModal from '../components/PreviewModal';
-import StaleInvoiceModal from '../components/modals/StaleInvoiceModal';
+
 import { useActivityLog } from '../hooks/useActivityLog';
 import { getInvoiceDate } from '../utils/helpers';
 
@@ -16,8 +16,7 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
     const [invoicesLoading, setInvoicesLoading] = useState(true);
     const [taxesData, setTaxesData] = useState([]);
     const [taxesLoading, setTaxesLoading] = useState(true);
-    const [staleInvoices, setStaleInvoices] = useState([]);
-    const [showStaleModal, setShowStaleModal] = useState(false);
+
 
     // Filter State
     const [selectedYear, setSelectedYear] = useState('All');
@@ -40,22 +39,8 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                 });
 
                 setMyInvoices(sortedInvoices);
+
                 setInvoicesLoading(false);
-
-                // Check for stale invoices (sent > 7 days ago and still awaiting acceptance)
-                const sevenDaysAgo = new Date();
-                sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-                const stale = sortedInvoices.filter(inv =>
-                    inv.status === 'Awaiting Acceptance' &&
-                    inv.sentAt &&
-                    new Date(inv.sentAt.toDate ? inv.sentAt.toDate() : inv.sentAt) < sevenDaysAgo
-                );
-
-                if (stale.length > 0) {
-                    setStaleInvoices(stale);
-                    setShowStaleModal(true);
-                }
             },
             (err) => {
                 console.error('Error fetching my invoices:', err);
@@ -417,9 +402,13 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
     };
 
     const handleRevise = async (invoice) => {
-        if (window.confirm(`Revise invoice ${invoice.approvedInvoiceId || invoice.id}? This will reset approval signatures and move it to Draft.`)) {
+        if (window.confirm(`Revise invoice ${invoice.approvedInvoiceId || invoice.id}? This will reset approval signatures, restore inventory, and move it to Draft.`)) {
             try {
-                await updateDoc(doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id), {
+                const batch = writeBatch(db);
+                const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id);
+
+                // 1. Reset Invoice Status
+                batch.update(invoiceRef, {
                     status: 'Draft',
                     controllerSignature: null,
                     approvedBy: null,
@@ -429,9 +418,30 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                         reason: invoice.rejectionReason || 'Manual Revision'
                     })
                 });
+
+                // 2. RESTORE INVENTORY (Reverse the deduction)
+                // We use Firestore's atomic increment to safely add the quantity back
+                const itemsToRestore = invoice.items || invoice.lineItems || [];
+
+                if (itemsToRestore.length > 0) {
+                    itemsToRestore.forEach(item => {
+                        if (item.id) {
+                            const invRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
+                            // Add back the quantity that was deducted
+                            batch.update(invRef, { stock: increment(Number(item.quantity) || 0) });
+                        }
+                    });
+                    log('INVENTORY_ACTION', `Restored stock for revised Invoice ${invoice.id}`, {
+                        documentId: invoice.id,
+                        itemCount: itemsToRestore.length
+                    });
+                }
+
+                await batch.commit();
                 navigateTo('invoiceEditor', { invoiceId: invoice.id });
             } catch (error) {
                 console.error('Error revising invoice:', error);
+                alert('Failed to revise invoice. Please try again.');
             }
         }
     };
@@ -461,17 +471,7 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                     />
                 )}
 
-                {showStaleModal && (
-                    <StaleInvoiceModal
-                        invoices={staleInvoices}
-                        onClose={() => setShowStaleModal(false)}
-                        onAction={async (invoice, action) => {
-                            if (action === 'Customer Accepted') await handleMarkAccepted(invoice);
-                            if (action === 'Customer Rejected') await handleMarkRejected(invoice);
-                            // Refresh logic handled by onSnapshot
-                        }}
-                    />
-                )}
+
 
                 <header className="bg-white p-4 rounded-xl shadow-md mb-8 flex justify-between items-center">
                     <div className="flex items-center space-x-3">
