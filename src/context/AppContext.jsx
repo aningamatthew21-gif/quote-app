@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, getDocs, doc, updateDoc, arrayUnion } from 'firebase/firestore';
-import StaleInvoiceModal from '../components/modals/StaleInvoiceModal';
+import GlobalStaleCheck from '../components/GlobalStaleCheck';
 import { db, auth } from '../firebase';
 import { logActivity } from '../utils/logger';
 import { AuthService } from '../services/authService';
@@ -47,10 +47,6 @@ export const AppProvider = ({ children }) => {
     const [userId, setUserId] = useState(null);
     const [userEmail, setUserEmail] = useState(null);
     const [appUser, setAppUser] = useState(null);
-
-    // Global Stale Invoice State
-    const [staleInvoices, setStaleInvoices] = useState([]);
-    const [showStaleModal, setShowStaleModal] = useState(false);
 
     useEffect(() => {
         console.log('🔍 [DEBUG] AppContext: Initializing Firebase...');
@@ -123,79 +119,7 @@ export const AppProvider = ({ children }) => {
         }
     }, []);
 
-    // Global Stale Invoice Check
-    useEffect(() => {
-        // Only run if user is logged in AND we haven't checked this session yet
-        const hasChecked = sessionStorage.getItem('hasCheckedStaleInvoices');
 
-        if (userId && firestoreInstance && appId && !hasChecked) {
-            const checkStaleInvoices = async () => {
-                try {
-                    const sevenDaysAgo = new Date();
-                    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-                    // Query: Status is 'Awaiting Acceptance'
-                    const q = query(
-                        collection(firestoreInstance, `artifacts/${appId}/public/data/invoices`),
-                        where("status", "==", "Awaiting Acceptance"),
-                        where("createdBy", "==", userId) // Only show their own invoices
-                    );
-
-                    const snapshot = await getDocs(q);
-                    const stale = snapshot.docs
-                        .map(doc => ({ id: doc.id, ...doc.data() }))
-                        .filter(inv => {
-                            // Robust date handling
-                            const sentDate = inv.sentAt?.toDate ? inv.sentAt.toDate() : new Date(inv.sentAt);
-                            return sentDate < sevenDaysAgo;
-                        });
-
-                    if (stale.length > 0) {
-                        setStaleInvoices(stale);
-                        setShowStaleModal(true);
-                    }
-
-                    // Mark as checked so we don't spam them on refresh
-                    sessionStorage.setItem('hasCheckedStaleInvoices', 'true');
-
-                } catch (error) {
-                    console.error("Error checking stale invoices:", error);
-                }
-            };
-
-            checkStaleInvoices();
-        }
-    }, [userId, firestoreInstance, appId]);
-
-    const handleStaleAction = async (invoice, action) => {
-        try {
-            const invoiceRef = doc(firestoreInstance, `artifacts/${appId}/public/data/invoices`, invoice.id);
-
-            if (action === 'Customer Accepted') {
-                await updateDoc(invoiceRef, {
-                    status: 'Customer Accepted',
-                    customerActionAt: new Date()
-                });
-            } else if (action === 'Customer Rejected') {
-                await updateDoc(invoiceRef, {
-                    status: 'Customer Rejected',
-                    customerActionAt: new Date(),
-                    rejectionReason: 'Marked as rejected via Stale Alert'
-                });
-            }
-
-            // Remove the handled invoice from the local popup list
-            setStaleInvoices(prev => prev.filter(inv => inv.id !== invoice.id));
-
-            // Close modal if list is empty
-            if (staleInvoices.length <= 1) {
-                setShowStaleModal(false);
-            }
-        } catch (err) {
-            console.error("Error updating stale invoice:", err);
-            alert("Could not update invoice. Please try again.");
-        }
-    };
 
     const navigate = (newPage, context = null) => {
         console.log(`Navigate to: ${newPage}`, context);
@@ -384,13 +308,7 @@ export const AppProvider = ({ children }) => {
     return (
         <AppContext.Provider value={value}>
             {renderPage()}
-            {showStaleModal && (
-                <StaleInvoiceModal
-                    invoices={staleInvoices}
-                    onClose={() => setShowStaleModal(false)}
-                    onAction={handleStaleAction}
-                />
-            )}
+            <GlobalStaleCheck />
         </AppContext.Provider>
     );
 };
