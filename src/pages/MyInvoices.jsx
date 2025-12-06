@@ -402,12 +402,12 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
     };
 
     const handleRevise = async (invoice) => {
-        if (window.confirm(`Revise invoice ${invoice.approvedInvoiceId || invoice.id}? This will reset approval signatures, restore inventory, and move it to Draft.`)) {
+        if (window.confirm(`Revise invoice ${invoice.approvedInvoiceId || invoice.id}? This will reset approval signatures AND restore inventory.`)) {
             try {
                 const batch = writeBatch(db);
                 const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id);
 
-                // 1. Reset Invoice Status
+                // 1. Reset Invoice Status & Signatures
                 batch.update(invoiceRef, {
                     status: 'Draft',
                     controllerSignature: null,
@@ -419,29 +419,30 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                     })
                 });
 
-                // 2. RESTORE INVENTORY (Reverse the deduction)
-                // We use Firestore's atomic increment to safely add the quantity back
+                // 2. RESTORE INVENTORY (Critical Fix)
+                // We assume invoice.items (or invoice.lineItems) contains the product data
                 const itemsToRestore = invoice.items || invoice.lineItems || [];
 
-                if (itemsToRestore.length > 0) {
-                    itemsToRestore.forEach(item => {
-                        if (item.id) {
-                            const invRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
-                            // Add back the quantity that was deducted
-                            batch.update(invRef, { stock: increment(Number(item.quantity) || 0) });
-                        }
-                    });
-                    log('INVENTORY_ACTION', `Restored stock for revised Invoice ${invoice.id}`, {
-                        documentId: invoice.id,
-                        itemCount: itemsToRestore.length
-                    });
-                }
+                itemsToRestore.forEach(item => {
+                    if (item.id && item.quantity) {
+                        const inventoryRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
+                        // Increment stock back (reverse the deduction)
+                        batch.update(inventoryRef, {
+                            stock: increment(item.quantity)
+                        });
+                    }
+                });
 
                 await batch.commit();
+
+                log('INVOICE_ACTION', `Revised Invoice ${invoice.id} - Stock Restored`, {
+                    documentId: invoice.id
+                });
+
                 navigateTo('invoiceEditor', { invoiceId: invoice.id });
             } catch (error) {
                 console.error('Error revising invoice:', error);
-                alert('Failed to revise invoice. Please try again.');
+                alert("Failed to revise invoice. Check console for details.");
             }
         }
     };
