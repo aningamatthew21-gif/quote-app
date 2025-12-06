@@ -34,6 +34,33 @@ export const useApp = () => {
     return context;
 };
 
+// --- SECURITY CONFIGURATION ---
+const ROLE_ACCESS_CONFIG = {
+    // Pages only Sales can see (plus shared ones)
+    sales: [
+        'salesDashboard',
+        'quoting',
+        'myInvoices',
+        'invoiceEditor', // Shared, but logic inside differs
+        'customerPortal',
+        'login'
+    ],
+    // Pages only Controller can see
+    controller: [
+        'controllerDashboard',
+        'salesInvoiceApproval',
+        'salesInvoiceReview',
+        'invoices', // This is "All Invoices"
+        'invoiceEditor', // Shared
+        'inventory',
+        'customers',
+        'taxSettings',
+        'auditTrail',
+        'pricingManagement',
+        'login'
+    ]
+};
+
 export const AppProvider = ({ children }) => {
     // Company branding
     const companyName = 'MIDSA';
@@ -47,6 +74,23 @@ export const AppProvider = ({ children }) => {
     const [userId, setUserId] = useState(null);
     const [userEmail, setUserEmail] = useState(null);
     const [appUser, setAppUser] = useState(null);
+
+    // --- 1. HISTORY API INTEGRATION (Fixes Back Button) ---
+    useEffect(() => {
+        const handlePopState = (event) => {
+            // This runs when user clicks Browser Back/Forward
+            if (event.state && event.state.page) {
+                setPage(event.state.page);
+                setPageContext(event.state.context || null);
+            } else {
+                // Fallback if history is empty
+                setPage('login');
+            }
+        };
+
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, []);
 
     useEffect(() => {
         console.log('🔍 [DEBUG] AppContext: Initializing Firebase...');
@@ -124,6 +168,26 @@ export const AppProvider = ({ children }) => {
     const navigate = (newPage, context = null) => {
         console.log(`Navigate to: ${newPage}`, context);
 
+        // Security Check before navigating
+        if (appUser && appUser.role) {
+            const allowedPages = ROLE_ACCESS_CONFIG[appUser.role];
+            if (allowedPages && !allowedPages.includes(newPage)) {
+                console.warn(`⛔ [SECURITY] Unauthorized navigation attempt by ${appUser.role} to ${newPage}`);
+                alert("You do not have permission to access this page.");
+                return;
+            }
+        }
+
+        // Update State
+        setPage(newPage);
+        setPageContext(context);
+
+        // Update Browser History (Push new entry)
+        // We use ?page= query param to make it look nicer, though strictly not required for this to work
+        const url = new URL(window.location);
+        url.searchParams.set('page', newPage);
+        window.history.pushState({ page: newPage, context }, '', url);
+
         // Log page navigation
         if (db && appId) {
             const username = userEmail ? userEmail.split('@')[0] : (userId || 'System');
@@ -135,9 +199,6 @@ export const AppProvider = ({ children }) => {
                 originalUserId: userId
             });
         }
-
-        setPage(newPage);
-        setPageContext(context);
     };
 
     const value = {
@@ -260,6 +321,21 @@ export const AppProvider = ({ children }) => {
             );
         }
 
+
+
+        // --- 2. SECURITY GUARD (Double Check) ---
+        // Even if they bypass navigate(), prevent rendering restricted components
+        if (appUser && appUser.role && page !== 'login') {
+            const allowedPages = ROLE_ACCESS_CONFIG[appUser.role];
+            if (allowedPages && !allowedPages.includes(page)) {
+                // Auto-redirect to safe dashboard
+                const safePage = appUser.role === 'controller' ? 'controllerDashboard' : 'salesDashboard';
+                // We use setTimeout to avoid render-cycle conflicts
+                setTimeout(() => navigate(safePage), 0);
+                return <div className="p-8 text-center">Redirecting unauthorized access...</div>;
+            }
+        }
+
         const commonProps = {
             navigateTo: navigate,
             db: firestoreInstance,
@@ -301,6 +377,12 @@ export const AppProvider = ({ children }) => {
             case 'pricingManagement':
                 return <PricingManagementLocal {...commonProps} />;
             default:
+                // Default fallback based on login status
+                if (appUser) {
+                    return appUser.role === 'controller'
+                        ? <ControllerAnalyticsDashboard {...commonProps} />
+                        : <SalesAnalyticsDashboard {...commonProps} />;
+                }
                 return <LoginScreen onLogin={handleLogin} onOTPLogin={handleOTPLogin} companyName={companyName} />;
         }
     };

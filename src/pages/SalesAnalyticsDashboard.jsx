@@ -43,7 +43,7 @@ const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) =
         console.log('Real-time updates active - refresh not needed');
     };
 
-    const { funnelData, topCustomersData } = useMemo(() => {
+    const { internalFunnel, pipelineMetrics, topCustomersData } = useMemo(() => {
         // BUSINESS LOGIC: Only count CUSTOMER ACCEPTED invoices for revenue
         // This ensures strict revenue recognition standards (ASC 606)
 
@@ -70,11 +70,17 @@ const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) =
             }
         });
 
-        const funnelData = [
-            { value: funnel['Pending Approval'], name: 'Pending', fill: '#f59e0b' },
-            { value: funnel['Approved'], name: 'Ready to Send', fill: '#3b82f6' },
-            { value: funnel['Awaiting Acceptance'], name: 'Awaiting Acceptance', fill: '#8b5cf6' },
-            { value: funnel['Customer Accepted'], name: 'Realized Revenue', fill: '#10b981' },
+        // 1. Separate Data for Chart (Internal Process) vs Legend (External Status)
+        const internalFunnel = [
+            { value: funnel['Pending Approval'], name: 'Pending Approval', fill: '#f59e0b' }, // Amber
+            { value: funnel['Approved'], name: 'Approved (Ready)', fill: '#3b82f6' },         // Blue
+        ];
+
+        // 2. Data for the "Key" / Bottom Section
+        const pipelineMetrics = [
+            { label: 'Awaiting Acceptance', value: funnel['Awaiting Acceptance'], color: 'bg-purple-500' },
+            { label: 'Realized Revenue', value: funnel['Customer Accepted'], color: 'bg-green-500' },
+            { label: 'Ready to Send', value: funnel['Approved'], color: 'bg-blue-500' }
         ];
 
         const topCustomersData = Object.entries(customerTotals)
@@ -82,7 +88,7 @@ const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) =
             .sort((a, b) => b.total - a.total)
             .slice(0, 5);
 
-        return { funnelData, topCustomersData };
+        return { internalFunnel, pipelineMetrics, topCustomersData };
     }, [invoices]);
 
     const handleFunnelClick = (data) => {
@@ -133,56 +139,46 @@ const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) =
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="bg-white p-6 rounded-xl shadow-md">
-                        <h3 className="font-semibold text-lg mb-4">My Invoice Status</h3>
-                        {isLoading ? <div className="flex items-center justify-center h-[300px] text-gray-500">Loading chart data...</div> : (
-                            funnelData.some(d => d.value > 0) ? (
-                                <div>
-                                    <ResponsiveContainer width="100%" height={300}>
-                                        <PieChart>
-                                            <Pie
-                                                data={funnelData}
-                                                cx="50%"
-                                                cy="50%"
-                                                innerRadius={60}
-                                                outerRadius={100}
-                                                paddingAngle={5}
-                                                dataKey="value"
-                                                label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(1)}%)`}
-                                                labelLine={false}
-                                                onClick={handleFunnelClick}
-                                                style={{ cursor: 'pointer' }}
-                                            >
-                                                {funnelData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip
-                                                formatter={(value, name) => [value, name]}
-                                                labelFormatter={(label) => `Status: ${label}`}
-                                            />
-                                        </PieChart>
-                                    </ResponsiveContainer>
+                        <h3 className="font-semibold text-lg mb-4">Internal Approval Status</h3>
 
-                                    {/* Legend */}
-                                    <div className="flex justify-center space-x-6 mt-4">
-                                        {funnelData.map((entry, index) => (
-                                            <div key={index} className="flex items-center space-x-2">
-                                                <div
-                                                    className="w-4 h-4 rounded-full"
-                                                    style={{ backgroundColor: entry.fill }}
-                                                ></div>
-                                                <span className="text-sm text-gray-700">
-                                                    {entry.name}: {entry.value}
-                                                </span>
+                        {/* THE DONUT CHART (Limited to Internal) */}
+                        {isLoading ? (
+                            <div className="flex items-center justify-center h-[200px] text-gray-500">Loading...</div>
+                        ) : (
+                            <div className="flex flex-col items-center">
+                                <ResponsiveContainer width="100%" height={250}>
+                                    <PieChart>
+                                        <Pie
+                                            data={internalFunnel}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={80}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                            label={({ value }) => value > 0 ? value : ''}
+                                        >
+                                            {internalFunnel.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.fill} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip />
+                                    </PieChart>
+                                </ResponsiveContainer>
+
+                                {/* THE PIPELINE METRICS (The "Key" Down There) */}
+                                <div className="w-full mt-4 grid grid-cols-2 gap-4 border-t pt-4">
+                                    {pipelineMetrics.map((metric, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                                            <div className="flex items-center">
+                                                <div className={`w-3 h-3 rounded-full mr-2 ${metric.color.replace('bg-', 'bg-')}`}></div>
+                                                <span className="text-sm text-gray-600">{metric.label}</span>
                                             </div>
-                                        ))}
-                                    </div>
+                                            <span className="font-bold text-gray-800">{metric.value}</span>
+                                        </div>
+                                    ))}
                                 </div>
-                            ) : (
-                                <div className="flex items-center justify-center h-[300px] text-gray-500">
-                                    No invoice data to display in chart.
-                                </div>
-                            )
+                            </div>
                         )}
                     </div>
                     <div className="bg-white p-6 rounded-xl shadow-md">

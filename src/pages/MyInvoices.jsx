@@ -369,14 +369,14 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
         const mailtoLink = `mailto:${customer.contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         window.open(mailtoLink);
 
-        setPreviewData(null); // Close modal
+        // DO NOT CLOSE MODAL AUTOMATICALLY - User needs to see success or take further action
     };
 
     // New handler for download action
     const handleDownloadAction = async () => {
         // Automatically move to next stage when downloaded
         await markAsSentToCustomer();
-        setPreviewData(null); // Close modal to indicate "done"
+        // DO NOT CLOSE MODAL AUTOMATICALLY
     };
 
     const handleMarkAccepted = async (invoice) => {
@@ -399,17 +399,40 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
         const reason = prompt("Please enter the reason for rejection:");
         if (reason) {
             try {
-                await updateDoc(doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id), {
+                // 1. Initialize Batch
+                const batch = writeBatch(db);
+                const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id);
+
+                // 2. Update Invoice Status
+                batch.update(invoiceRef, {
                     status: 'Customer Rejected',
                     customerActionAt: new Date(),
                     rejectionReason: reason
                 });
-                log('INVOICE_ACTION', `Marked Invoice ${invoice.id} as Customer Rejected`, {
+
+                // 3. RESTORE INVENTORY (New Logic)
+                // Since the customer said "No", we put the items back on the shelf.
+                const itemsToRestore = invoice.items || invoice.lineItems || [];
+                if (itemsToRestore.length > 0) {
+                    itemsToRestore.forEach(item => {
+                        if (item.id) {
+                            const invRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
+                            batch.update(invRef, { stock: increment(Number(item.quantity) || 0) });
+                        }
+                    });
+                }
+
+                // 4. Commit Changes
+                await batch.commit();
+
+                log('INVOICE_ACTION', `Marked Invoice ${invoice.id} as Customer Rejected - Stock Restored`, {
                     documentId: invoice.id,
-                    reason
+                    reason,
+                    itemsRestored: itemsToRestore.length
                 });
             } catch (error) {
                 console.error('Error marking rejected:', error);
+                alert("Failed to update status. Please try again.");
             }
         }
     };

@@ -63,6 +63,18 @@ export default function PreviewModal({ open, onClose, payload, mode = 'invoice',
     }
   }, [zoom, pdfBase64]);
 
+  const triggerLocalDownload = () => {
+    if (!pdfBase64) return;
+    const fileName = `${payload.customer?.name || 'Customer'} - ${payload.invoiceNumber || payload.invoiceId || payload.quoteId || 'Document'}.pdf`;
+    const link = document.createElement('a');
+    link.href = `data:application/pdf;base64,${pdfBase64}`;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    console.log('🔵 [DEBUG] Download triggered:', fileName);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black bg-opacity-50" role="dialog" aria-modal="true" aria-label="Preview document">
       <div className="bg-white w-screen h-screen flex flex-col">
@@ -96,37 +108,43 @@ export default function PreviewModal({ open, onClose, payload, mode = 'invoice',
             </div>
             <div className="flex gap-2">
               {iframeSrc && (
-                <button
-                  onClick={() => {
-                    const fileName = `${payload.customer?.name || 'Customer'} - ${payload.invoiceNumber || payload.invoiceId || payload.quoteId || 'Document'}.pdf`;
-                    const link = document.createElement('a');
-                    link.href = `data:application/pdf;base64,${pdfBase64}`;
-                    link.download = fileName;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    console.log('🔵 [DEBUG] Download triggered:', fileName);
+                <>
+                  <button
+                    onClick={() => {
+                      triggerLocalDownload();
+                      // Notify parent if handler is provided (e.g., to update status)
+                      if (onDownload) onDownload();
+                    }}
+                    className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded shadow-sm flex items-center"
+                  >
+                    <span className="mr-1">⬇️</span> Download Only
+                  </button>
 
-                    // Notify parent if handler is provided (e.g., to update status)
-                    if (onDownload) {
-                      onDownload();
-                    }
-                  }}
-                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm flex items-center"
-                >
-                  <span className="mr-1">⬇️</span> Download
-                </button>
+                  {isDistribution && onEmail && (
+                    <button
+                      onClick={() => {
+                        // 1. Trigger Download
+                        triggerLocalDownload();
+                        // 2. Trigger Email (which also handles status update in parent)
+                        onEmail();
+                      }}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm flex items-center"
+                    >
+                      <span className="mr-1">📧</span> Download & Email
+                    </button>
+                  )}
+                </>
               )}
 
               {isDistribution ? (
                 <>
-                  {onEmail && (
+                  {onEmail && !iframeSrc && (
                     <button onClick={onEmail} className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded">
-                      Send Email
+                      Send Email Only
                     </button>
                   )}
-                  <button onClick={onClose} className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded">
-                    Close
+                  <button onClick={onClose} className="px-3 py-2 bg-gray-800 hover:bg-gray-900 text-white rounded">
+                    Done / Close
                   </button>
                 </>
               ) : (

@@ -6,8 +6,22 @@ import QuantityModal from '../components/modals/QuantityModal';
 import ConfirmationModal from '../components/modals/ConfirmationModal';
 import { logInvoiceActivity } from '../utils/logger';
 
-const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
+const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser }) => {
     const { invoiceId } = pageContext;
+
+    // 2. New Logic for Back/Cancel Navigation
+    const handleBackNavigation = () => {
+        if (currentUser?.role === 'sales') {
+            // Salespeople go to "My Invoices"
+            navigateTo('myInvoices');
+        } else if (currentUser?.role === 'controller') {
+            // Controllers go to "All Invoices"
+            navigateTo('invoices');
+        } else {
+            // Fallback
+            navigateTo('salesDashboard');
+        }
+    };
 
     // Real-time data fetching for immediate updates
     const [inventory, setInventory] = useState([]);
@@ -362,7 +376,12 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
 
                 <header className="bg-white p-4 rounded-xl shadow-md mb-8 flex justify-between items-center">
                     <h1 className="text-2xl font-bold text-gray-800">Edit Invoice #{invoiceId}</h1>
-                    <button onClick={() => navigateTo('invoices')} className="text-sm text-gray-600 hover:text-blue-600"><Icon id="times" className="mr-1" /> Cancel</button>
+                    <button
+                        onClick={handleBackNavigation}
+                        className="text-sm text-gray-600 hover:text-blue-600"
+                    >
+                        <Icon id="times" className="mr-1" /> Cancel
+                    </button>
                 </header>
 
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
