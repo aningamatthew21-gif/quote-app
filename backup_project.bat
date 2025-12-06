@@ -8,6 +8,10 @@ echo.
 cd /d "%~dp0"
 
 :: Add all changes
+:: Pull latest changes
+echo [0/3] Syncing with GitHub...
+git pull origin main
+
 echo [1/3] Staging files...
 git add .
 
