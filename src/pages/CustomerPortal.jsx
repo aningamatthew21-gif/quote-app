@@ -20,9 +20,13 @@ const StatCard = ({ title, value, subtext, icon, color }) => (
 
 const StatusBadge = ({ status }) => {
     const styles = {
-        'Approved': 'bg-green-100 text-green-800 border-green-200',
-        'Pending Approval': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+        'Approved': 'bg-blue-100 text-blue-800 border-blue-200', // Ready to Send (Internal)
+        'Awaiting Acceptance': 'bg-yellow-100 text-yellow-800 border-yellow-200', // Action Required
+        'Customer Accepted': 'bg-green-100 text-green-800 border-green-200', // Revenue Recognized
+        'Paid': 'bg-green-100 text-green-800 border-green-200',
+        'Pending Approval': 'bg-gray-100 text-gray-800 border-gray-200',
         'Rejected': 'bg-red-100 text-red-800 border-red-200',
+        'Customer Rejected': 'bg-red-100 text-red-800 border-red-200',
         'Draft': 'bg-gray-100 text-gray-800 border-gray-200'
     };
     const defaultStyle = 'bg-gray-100 text-gray-800 border-gray-200';
@@ -62,7 +66,12 @@ const CustomerPortal = ({ navigateTo, customerId, db, appId, userId }) => {
     const stats = useMemo(() => {
         const total = invoices.length;
         const totalValue = invoices.reduce((sum, inv) => sum + (inv.total || 0), 0);
-        const approvedCount = invoices.filter(inv => inv.status === 'Approved').length;
+        // "Approved" for customer means anything sent to them or accepted
+        const approvedCount = invoices.filter(inv =>
+            inv.status === 'Awaiting Acceptance' ||
+            inv.status === 'Customer Accepted' ||
+            inv.status === 'Paid'
+        ).length;
         const pendingCount = invoices.filter(inv => inv.status === 'Pending Approval').length;
 
         return { total, totalValue, approvedCount, pendingCount };
@@ -72,9 +81,9 @@ const CustomerPortal = ({ navigateTo, customerId, db, appId, userId }) => {
     const filteredInvoices = useMemo(() => {
         return invoices.filter(inv => {
             const matchesTab = activeTab === 'All' ||
-                (activeTab === 'Approved' && inv.status === 'Approved') ||
+                (activeTab === 'Approved' && (inv.status === 'Awaiting Acceptance' || inv.status === 'Customer Accepted' || inv.status === 'Paid')) ||
                 (activeTab === 'Pending' && inv.status === 'Pending Approval') ||
-                (activeTab === 'Rejected' && inv.status === 'Rejected');
+                (activeTab === 'Rejected' && (inv.status === 'Rejected' || inv.status === 'Customer Rejected'));
 
             const matchesSearch = inv.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (inv.date && inv.date.includes(searchTerm));
@@ -171,9 +180,9 @@ const CustomerPortal = ({ navigateTo, customerId, db, appId, userId }) => {
                         color="bg-green-500"
                     />
                     <StatCard
-                        title="Approved"
+                        title="Open Invoices"
                         value={stats.approvedCount}
-                        subtext="Ready for payment"
+                        subtext="Awaiting payment/action"
                         icon="check-circle"
                         color="bg-indigo-500"
                     />
@@ -199,8 +208,8 @@ const CustomerPortal = ({ navigateTo, customerId, db, appId, userId }) => {
                                     key={tab}
                                     onClick={() => setActiveTab(tab)}
                                     className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === tab
-                                            ? 'bg-white text-gray-900 shadow-sm'
-                                            : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
+                                        ? 'bg-white text-gray-900 shadow-sm'
+                                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
                                         }`}
                                 >
                                     {tab}

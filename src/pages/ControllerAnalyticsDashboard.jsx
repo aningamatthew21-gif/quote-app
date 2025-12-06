@@ -23,9 +23,11 @@ const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, user
         if (!db || !appId) return;
 
         const unsubscribe = onSnapshot(
-            query(collection(db, `artifacts/${appId}/public/data/invoices`), where("status", "==", "Approved")),
+            query(collection(db, `artifacts/${appId}/public/data/invoices`)),
             (snapshot) => {
                 const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Filter out Drafts and Rejected for general dashboard view if needed, 
+                // but we need 'Customer Accepted' for revenue and 'Approved' for "Ready to Send"
                 setInvoices(result);
                 setInvoicesLoading(false);
             },
@@ -59,9 +61,9 @@ const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, user
     }, [db, appId]);
 
     const { invoiceData, inventoryHealthData } = useMemo(() => {
-        // Invoice Statistics (Approved only)
+        // Invoice Statistics (REVENUE ONLY: Customer Accepted or Paid)
         const monthlyData = {};
-        invoices.filter(inv => inv.status === 'Approved').forEach(inv => {
+        invoices.filter(inv => inv.status === 'Customer Accepted' || inv.status === 'Paid').forEach(inv => {
             const date = getInvoiceDate(inv);
             // Format as YYYY-MM for consistent sorting and grouping
             const year = date.getFullYear();
@@ -142,9 +144,9 @@ const ControllerAnalyticsDashboard = ({ navigateTo, db, appId, currentUser, user
                         <p className="text-gray-600">Configure global tax rates.</p>
                     </div>
                     <div className="bg-white p-6 rounded-xl shadow-md flex flex-col items-center justify-center">
-                        <h3 className="font-semibold text-lg mb-4">Total Approved Invoices</h3>
-                        <div className="text-5xl font-bold text-green-500">{invoices.filter(inv => inv.status === 'Approved').length}</div>
-                        <p className="text-gray-600 mt-2">invoices ready for processing</p>
+                        <h3 className="font-semibold text-lg mb-4">Recognized Invoices</h3>
+                        <div className="text-5xl font-bold text-green-500">{invoices.filter(inv => inv.status === 'Customer Accepted' || inv.status === 'Paid').length}</div>
+                        <p className="text-gray-600 mt-2">revenue generating invoices</p>
                     </div>
                 </div>
             </div>

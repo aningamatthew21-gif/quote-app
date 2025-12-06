@@ -108,8 +108,9 @@ export default function ReportModal({ appId, role = 'controller', onClose, db })
         summary.rejectedInvoiceValue += total;
       }
 
-      if ((status === 'Approved' || status === 'Paid') && (!isLegacy || includeLegacy)) {
-        summary.totalApprovedInvoicesCount += 1;
+      // REVENUE RECOGNITION UPDATE: Only count Customer Accepted or Paid invoices
+      if ((status === 'Customer Accepted' || status === 'Paid') && (!isLegacy || includeLegacy)) {
+        summary.totalApprovedInvoicesCount += 1; // Keeping variable name to minimize refactor churn, but logic is updated
         summary.totalApprovedInvoicesValue += total;
         summary.totalRecognizedRevenue += total;
       }
@@ -156,7 +157,9 @@ export default function ReportModal({ appId, role = 'controller', onClose, db })
     const now = new Date();
     const agingBuckets = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
     invoicesRows.forEach(inv => {
-      if (inv.status !== 'Approved' || inv.isLegacy) return;
+      // AGING UPDATE: Only age invoices that are recognized (Customer Accepted) or Paid (partially)
+      // We exclude 'Approved' (Ready to Send) and 'Awaiting Acceptance' as the debt is not yet acknowledged
+      if ((inv.status !== 'Customer Accepted' && inv.status !== 'Paid') || inv.isLegacy) return;
       const invoiceDate = inv.date ? new Date(inv.date) : null;
       if (!invoiceDate) return;
       const diffDays = Math.ceil((now - invoiceDate) / (1000 * 60 * 60 * 24));
@@ -227,7 +230,7 @@ export default function ReportModal({ appId, role = 'controller', onClose, db })
       ['Total Revenue', formatCurrency(report.summary.totalRecognizedRevenue)],
       ['Outstanding AR', formatCurrency(report.summary.outstandingAR)],
       ['Total Payments', formatCurrency(report.summary.totalPaymentsReceived)],
-      ['Approved Invoices', report.summary.totalApprovedInvoicesCount.toString()]
+      ['Recognized Invoices', report.summary.totalApprovedInvoicesCount.toString()]
     ];
 
     autoTable(doc, {
@@ -398,7 +401,7 @@ export default function ReportModal({ appId, role = 'controller', onClose, db })
                   <div className="text-2xl font-bold">{formatCurrency(report.summary.outstandingAR)}</div>
                 </div>
                 <div className="bg-purple-50 p-4 rounded">
-                  <h4 className="text-purple-800 font-semibold">Approved Invoices</h4>
+                  <h4 className="text-purple-800 font-semibold">Recognized Invoices</h4>
                   <div className="text-2xl font-bold">{report.summary.totalApprovedInvoicesCount}</div>
                 </div>
               </div>
