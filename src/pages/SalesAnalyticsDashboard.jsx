@@ -44,29 +44,37 @@ const SalesAnalyticsDashboard = ({ navigateTo, db, appId, userId, userEmail }) =
     };
 
     const { funnelData, topCustomersData } = useMemo(() => {
-        // BUSINESS LOGIC: Only count APPROVED invoices for analytics
-        // This prevents capturing wrong values if the financial controller rejects an invoice
+        // BUSINESS LOGIC: Only count CUSTOMER ACCEPTED invoices for revenue
+        // This ensures strict revenue recognition standards (ASC 606)
 
         // Exclude Rejected invoices from all calculations
-        const filteredInvoices = invoices.filter(inv => inv.status !== 'Rejected');
-        const funnel = { 'Pending Approval': 0, 'Approved': 0 };
+        const filteredInvoices = invoices.filter(inv => inv.status !== 'Rejected' && inv.status !== 'Customer Rejected');
+        const funnel = {
+            'Pending Approval': 0,
+            'Approved': 0, // Ready to Send
+            'Awaiting Acceptance': 0,
+            'Customer Accepted': 0
+        };
         const customerTotals = {};
 
         filteredInvoices.forEach(inv => {
-            // Count all non-rejected invoices for funnel chart
+            // Funnel Logic
             if (inv.status === 'Pending Approval') funnel['Pending Approval']++;
             if (inv.status === 'Approved') funnel['Approved']++;
+            if (inv.status === 'Awaiting Acceptance') funnel['Awaiting Acceptance']++;
+            if (inv.status === 'Customer Accepted' || inv.status === 'Paid') funnel['Customer Accepted']++;
 
-            // CRITICAL: ONLY count APPROVED invoices for top customers chart
-            // This ensures data integrity and prevents false customer rankings
-            if (inv.status === 'Approved') {
+            // CRITICAL: ONLY count CUSTOMER ACCEPTED (or Paid) invoices for top customers chart
+            if (inv.status === 'Customer Accepted' || inv.status === 'Paid') {
                 customerTotals[inv.customerName] = (customerTotals[inv.customerName] || 0) + (inv.total || inv.totals?.grandTotal || inv.totals?.subtotal || 0);
             }
         });
 
         const funnelData = [
             { value: funnel['Pending Approval'], name: 'Pending', fill: '#f59e0b' },
-            { value: funnel['Approved'], name: 'Approved', fill: '#3b82f6' },
+            { value: funnel['Approved'], name: 'Ready to Send', fill: '#3b82f6' },
+            { value: funnel['Awaiting Acceptance'], name: 'Awaiting Acceptance', fill: '#8b5cf6' },
+            { value: funnel['Customer Accepted'], name: 'Realized Revenue', fill: '#10b981' },
         ];
 
         const topCustomersData = Object.entries(customerTotals)

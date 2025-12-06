@@ -1,19 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, where, getDoc, doc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, getDoc, doc, updateDoc, arrayUnion, writeBatch } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import PreviewModal from '../components/PreviewModal';
+import StaleInvoiceModal from '../components/modals/StaleInvoiceModal';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { getInvoiceDate } from '../utils/helpers';
 
 const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
     const { log } = useActivityLog();
     const [previewData, setPreviewData] = useState(null);
+    const [activeTab, setActiveTab] = useState('readyToSend'); // readyToSend, awaitingAcceptance, realizedRevenue, disputed
 
     // Real-time data fetching for immediate updates
     const [myInvoices, setMyInvoices] = useState([]);
     const [invoicesLoading, setInvoicesLoading] = useState(true);
     const [taxesData, setTaxesData] = useState([]);
     const [taxesLoading, setTaxesLoading] = useState(true);
+    const [staleInvoices, setStaleInvoices] = useState([]);
+    const [showStaleModal, setShowStaleModal] = useState(false);
 
     // Filter State
     const [selectedYear, setSelectedYear] = useState('All');
@@ -28,33 +32,30 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
             (snapshot) => {
                 const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-                // Sort by timestamp for true newest-to-oldest order (same as AllInvoices)
+                // Sort by timestamp for true newest-to-oldest order
                 const sortedInvoices = [...result].sort((a, b) => {
                     const dateA = getInvoiceDate(a);
                     const dateB = getInvoiceDate(b);
                     return dateB - dateA; // Newest first
                 });
 
-                console.log('📅 [DEBUG] MyInvoices: Enhanced timestamp sorting applied', {
-                    totalInvoices: result.length,
-                    firstInvoice: {
-                        id: sortedInvoices[0]?.id,
-                        date: sortedInvoices[0]?.date,
-                        createdAt: sortedInvoices[0]?.createdAt,
-                        timestamp: sortedInvoices[0]?.timestamp
-                    },
-                    lastInvoice: {
-                        id: sortedInvoices[sortedInvoices.length - 1]?.id,
-                        date: sortedInvoices[sortedInvoices.length - 1]?.date,
-                        createdAt: sortedInvoices[sortedInvoices.length - 1]?.createdAt,
-                        timestamp: sortedInvoices[sortedInvoices.length - 1]?.timestamp
-                    },
-                    sortOrder: 'newest to oldest (by timestamp)',
-                    userId
-                });
-
                 setMyInvoices(sortedInvoices);
                 setInvoicesLoading(false);
+
+                // Check for stale invoices (sent > 7 days ago and still awaiting acceptance)
+                const sevenDaysAgo = new Date();
+                sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+                const stale = sortedInvoices.filter(inv =>
+                    inv.status === 'Awaiting Acceptance' &&
+                    inv.sentAt &&
+                    new Date(inv.sentAt.toDate ? inv.sentAt.toDate() : inv.sentAt) < sevenDaysAgo
+                );
+
+                if (stale.length > 0) {
+                    setStaleInvoices(stale);
+                    setShowStaleModal(true);
+                }
             },
             (err) => {
                 console.error('Error fetching my invoices:', err);
@@ -73,7 +74,6 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
             collection(db, `artifacts/${appId}/public/data/settings`),
             (snapshot) => {
                 const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log("Taxessssss555", result);
                 setTaxesData(result);
                 setTaxesLoading(false);
             },
@@ -102,11 +102,26 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
         return {};
     }, [taxesData]);
 
+    // Filter invoices based on active tab and date filters
     const filteredInvoices = useMemo(() => {
         let result = myInvoices;
 
-        if (pageContext?.status) {
-            result = result.filter(inv => inv.status === pageContext.status);
+        // Tab Filtering Logic
+        switch (activeTab) {
+            case 'readyToSend':
+                result = result.filter(inv => inv.status === 'Approved');
+                break;
+            case 'awaitingAcceptance':
+                result = result.filter(inv => inv.status === 'Awaiting Acceptance');
+                break;
+            case 'realizedRevenue':
+                result = result.filter(inv => inv.status === 'Customer Accepted' || inv.status === 'Paid');
+                break;
+            case 'disputed':
+                result = result.filter(inv => inv.status === 'Customer Rejected' || inv.status === 'Rejected');
+                break;
+            default:
+                break;
         }
 
         return result.filter(invoice => {
@@ -119,7 +134,7 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
 
             return yearMatch && monthMatch;
         });
-    }, [myInvoices, pageContext, selectedYear, selectedMonth]);
+    }, [myInvoices, activeTab, selectedYear, selectedMonth]);
 
     // Generate Filter Options
     const { years, months } = useMemo(() => {
@@ -140,63 +155,24 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
 
     const handleShowPreview = async (invoice) => {
         try {
-            console.log('🔍 [DEBUG] MyInvoices: handleShowPreview called for invoice:', {
-                id: invoice.id,
-                hasSignature: !!invoice.controllerSignature,
-                controllerName: invoice.controllerName
-            });
-
-            // Fetch complete invoice data from Firestore to get all fields including signature
+            // Fetch complete invoice data from Firestore
             let completeInvoiceData = invoice;
             if (db && appId) {
                 try {
-                    console.log('📡 [DEBUG] MyInvoices: Fetching complete invoice data from Firestore');
                     const invoiceDoc = await getDoc(doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id));
                     if (invoiceDoc.exists()) {
                         completeInvoiceData = { id: invoice.id, ...invoiceDoc.data() };
-                        console.log('✅ [DEBUG] MyInvoices: Complete invoice data fetched:', {
-                            hasSignature: !!completeInvoiceData.controllerSignature,
-                            controllerName: completeInvoiceData.controllerName,
-                            subsidiary: completeInvoiceData.controllerSubsidiary,
-                            hasItems: !!completeInvoiceData.items,
-                            itemsCount: completeInvoiceData.items?.length || 0,
-                            hasLineItems: !!completeInvoiceData.lineItems,
-                            lineItemsCount: completeInvoiceData.lineItems?.length || 0,
-                            allKeys: Object.keys(completeInvoiceData)
-                        });
-                    } else {
-                        console.log('⚠️ [DEBUG] MyInvoices: Invoice document not found in Firestore');
                     }
                 } catch (error) {
-                    console.error('❌ [ERROR] MyInvoices: Error fetching complete invoice data:', error);
-                    // Continue with basic invoice data
+                    console.error('Error fetching complete invoice data:', error);
                 }
             }
 
-            // Get the stored tax configuration from the invoice
-            // This should be saved when the controller approves the invoice
             const taxConfig = completeInvoiceData.taxConfiguration || taxes;
 
-            console.log('🧾 [DEBUG] MyInvoices: Tax configuration', {
-                hasTaxConfiguration: !!completeInvoiceData.taxConfiguration,
-                taxConfigurationCount: completeInvoiceData.taxConfiguration?.length || 0,
-                hasTaxes: !!taxes,
-                taxesCount: taxes?.length || 0,
-                finalTaxConfig: taxConfig,
-                taxConfigCount: taxConfig?.length || 0
-            });
-
             // --- Currency Conversion Logic ---
-            // If the invoice was created in USD, we need to convert the GHS values back to USD for display
             if (completeInvoiceData.currency === 'USD') {
                 const exchangeRate = completeInvoiceData.exchangeRate || 1;
-                console.log('💱 [DEBUG] MyInvoices: Converting invoice data to USD', { exchangeRate });
-
-                if (!completeInvoiceData.exchangeRate) {
-                    console.warn('⚠️ [WARNING] MyInvoices: USD invoice missing exchange rate, using 1.0');
-                }
-
-                // Convert items
                 if (completeInvoiceData.items) {
                     completeInvoiceData.items = completeInvoiceData.items.map(item => ({
                         ...item,
@@ -204,7 +180,6 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                         finalPrice: (Number(item.finalPrice) || Number(item.price) || 0) / exchangeRate
                     }));
                 }
-
                 if (completeInvoiceData.lineItems) {
                     completeInvoiceData.lineItems = completeInvoiceData.lineItems.map(item => ({
                         ...item,
@@ -212,8 +187,6 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                         finalPrice: (Number(item.finalPrice) || Number(item.price) || 0) / exchangeRate
                     }));
                 }
-
-                // Convert order charges
                 if (completeInvoiceData.orderCharges) {
                     completeInvoiceData.orderCharges = {
                         shipping: (Number(completeInvoiceData.orderCharges.shipping) || 0) / exchangeRate,
@@ -223,90 +196,24 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                 }
             }
 
-            // Calculate subtotal from line items (handle both items and lineItems arrays)
             const itemsArray = completeInvoiceData.items || completeInvoiceData.lineItems || [];
-            console.log('🔍 [DEBUG] MyInvoices: Processing items for preview', {
-                hasItems: !!completeInvoiceData.items,
-                itemsCount: completeInvoiceData.items?.length || 0,
-                hasLineItems: !!completeInvoiceData.lineItems,
-                lineItemsCount: completeInvoiceData.lineItems?.length || 0,
-                finalItemsCount: itemsArray.length,
-                items: itemsArray.map(item => ({
-                    id: item.id,
-                    name: item.name,
-                    quantity: item.quantity,
-                    price: item.finalPrice || item.price
-                }))
-            });
-
             const subtotal = itemsArray.reduce((acc, item) => {
                 const price = Number(item.finalPrice || item.price || 0);
                 const quantity = Number(item.quantity || 0);
-                const itemTotal = price * quantity;
-
-                console.log('🔍 [DEBUG] MyInvoices: Item calculation', {
-                    itemId: item.id,
-                    itemName: item.name,
-                    finalPrice: item.finalPrice,
-                    price: item.price,
-                    quantity: item.quantity,
-                    calculatedPrice: price,
-                    calculatedQuantity: quantity,
-                    itemTotal,
-                    isPriceValid: !isNaN(price),
-                    isQuantityValid: !isNaN(quantity),
-                    isTotalValid: !isNaN(itemTotal)
-                });
-
-                return acc + itemTotal;
+                return acc + (price * quantity);
             }, 0);
 
-            // Validate subtotal before proceeding
-            if (isNaN(subtotal) || !isFinite(subtotal)) {
-                console.error('❌ [ERROR] MyInvoices: Invalid subtotal calculated', {
-                    subtotal,
-                    itemsArray,
-                    itemsData: itemsArray.map(item => ({
-                        id: item.id,
-                        name: item.name,
-                        price: item.price,
-                        quantity: item.quantity
-                    }))
-                });
-                throw new Error('Invalid subtotal calculation - check item prices and quantities');
-            }
-
-            console.log('✅ [DEBUG] MyInvoices: Valid subtotal calculated', { subtotal });
-
-            // Calculate dynamic totals based on tax configuration (include order charges)
             const orderCharges = completeInvoiceData.orderCharges || { shipping: 0, handling: 0, discount: 0 };
             const shipping = Number(orderCharges.shipping || 0);
             const handling = Number(orderCharges.handling || 0);
             const discount = Number(orderCharges.discount || 0);
             const subtotalWithCharges = subtotal + shipping + handling - discount;
 
-            console.log('🧮 [DEBUG] MyInvoices: Order charges calculation', {
-                subtotal,
-                shipping,
-                handling,
-                discount,
-                subtotalWithCharges
-            });
-
-            // Ensure taxConfig is an array
             const safeTaxConfig = Array.isArray(taxConfig) ? taxConfig : [];
-
-            console.log('🧮 [DEBUG] MyInvoices: About to calculate totals', {
-                subtotalWithCharges,
-                taxConfigLength: safeTaxConfig.length,
-                orderCharges
-            });
-
             var totals = calculateDynamicTotals(subtotalWithCharges, safeTaxConfig, orderCharges);
 
-            // Fetch complete customer data from database using customerId
+            // Fetch customer data
             let customerData = { name: completeInvoiceData.customerName };
-
             if (completeInvoiceData.customerId && db) {
                 try {
                     const customerDoc = await getDoc(doc(db, `artifacts/${appId}/public/data/customers`, completeInvoiceData.customerId));
@@ -323,22 +230,10 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                     }
                 } catch (error) {
                     console.error('Error fetching customer data:', error);
-                    // Fallback to basic data
-                    customerData = {
-                        name: completeInvoiceData.customerName,
-                        contactEmail: completeInvoiceData.customerEmail || 'test@example.com',
-                        location: '[CUSTOMER LOCATION]',
-                        poBox: '[CUSTOMER P.O. BOX]',
-                        region: '[REGION]',
-                        address: '[ADDRESS]'
-                    };
                 }
             }
 
-            // Validate totals before setting preview data
             if (!totals || Object.values(totals).some(val => isNaN(val) || !isFinite(val))) {
-                console.error('❌ [ERROR] MyInvoices: Invalid totals calculated, using fallback values', { totals });
-                // Provide fallback totals
                 totals = {
                     subtotal: subtotal,
                     grandTotal: subtotal,
@@ -349,170 +244,107 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                 };
             }
 
-            // Set preview data with tax configuration, complete customer data, and signature information
             const previewDataObj = {
                 customer: customerData,
-                items: itemsArray,  // Use the unified items array
+                items: itemsArray,
                 subtotal,
-                taxes: safeTaxConfig,  // Pass the safe tax configuration
+                taxes: safeTaxConfig,
                 totals,
                 invoiceId: completeInvoiceData.id,
                 invoiceNumber: completeInvoiceData.invoiceNumber,
                 invoiceDate: completeInvoiceData.invoiceDate,
-                // Add signature data for PDF generation
                 controllerSignature: completeInvoiceData.controllerSignature,
                 controllerName: completeInvoiceData.controllerName,
                 controllerSubsidiary: completeInvoiceData.controllerSubsidiary,
                 signatureTimestamp: completeInvoiceData.signatureTimestamp,
                 approvedBy: completeInvoiceData.approvedBy,
-                currency: completeInvoiceData.currency, // Ensure currency is passed
-                exchangeRate: completeInvoiceData.exchangeRate // Ensure exchange rate is passed
+                currency: completeInvoiceData.currency,
+                exchangeRate: completeInvoiceData.exchangeRate
             };
-
-            console.log('🔍 [DEBUG] MyInvoices: Preview data prepared with signature:', {
-                hasSignature: !!completeInvoiceData.controllerSignature,
-                controllerName: completeInvoiceData.controllerName,
-                subsidiary: completeInvoiceData.controllerSubsidiary,
-                signatureSize: completeInvoiceData.controllerSignature?.length
-            });
 
             setPreviewData(previewDataObj);
         } catch (error) {
-            console.error('❌ [ERROR] MyInvoices: Error preparing preview data:', error);
-            console.error('❌ [ERROR] Error details:', {
-                message: error.message,
-                stack: error.stack
-            });
+            console.error('Error preparing preview data:', error);
             alert('Error preparing invoice preview. Please try again.');
         }
     };
 
-    // Helper function to calculate totals dynamically (synchronized with InvoiceEditor)
     const calculateDynamicTotals = (subtotalWithCharges, taxes, orderCharges = {}) => {
-        console.log('🧮 [DEBUG] MyInvoices: calculateDynamicTotals called', {
-            subtotalWithCharges,
-            taxesCount: taxes.length,
-            orderCharges,
-            taxes: taxes.map(t => ({
-                id: t.id,
-                name: t.name,
-                rate: t.rate,
-                on: t.on,
-                enabled: t.enabled
-            }))
-        });
-
         const totals = {};
-
-        // Calculate base subtotal (without order charges)
         const subtotal = subtotalWithCharges - (orderCharges.shipping || 0) - (orderCharges.handling || 0) + (orderCharges.discount || 0);
         totals.subtotal = subtotal;
-
-        // Add order charges to result
         totals.shipping = orderCharges.shipping || 0;
         totals.handling = orderCharges.handling || 0;
         totals.discount = orderCharges.discount || 0;
         totals.subtotalWithCharges = subtotalWithCharges;
 
         let levyTotal = subtotalWithCharges;
-
-        // Apply taxes to subtotal with charges (NHIL, GETFund, etc.)
         const subtotalTaxes = taxes.filter(t => t.on === 'subtotal' && t.enabled);
-        console.log('📊 [DEBUG] MyInvoices: Subtotal taxes', {
-            count: subtotalTaxes.length,
-            taxes: subtotalTaxes.map(t => ({ id: t.id, name: t.name, rate: t.rate }))
-        });
-
         subtotalTaxes.forEach(t => {
             const taxAmount = subtotalWithCharges * (t.rate / 100);
             totals[t.id] = taxAmount;
-            totals[`${t.id}_rate`] = t.rate; // Store the rate too
+            totals[`${t.id}_rate`] = t.rate;
             levyTotal += taxAmount;
-            console.log('💰 [DEBUG] MyInvoices: Subtotal tax calculation', {
-                taxId: t.id,
-                taxName: t.name,
-                rate: t.rate,
-                taxAmount,
-                levyTotalAfter: levyTotal
-            });
         });
-
         totals.levyTotal = levyTotal;
 
-        // Apply taxes to levy total (VAT, COVID-19 Levy, etc.)
         const levyTaxes = taxes.filter(t => t.on === 'levyTotal' && t.enabled);
-        console.log('📊 [DEBUG] MyInvoices: Levy taxes', {
-            count: levyTaxes.length,
-            taxes: levyTaxes.map(t => ({ id: t.id, name: t.name, rate: t.rate }))
-        });
-
         let grandTotal = levyTotal;
         levyTaxes.forEach(t => {
             const taxAmount = levyTotal * (t.rate / 100);
             totals[t.id] = taxAmount;
-            totals[`${t.id}_rate`] = t.rate; // Store the rate too
+            totals[`${t.id}_rate`] = t.rate;
             grandTotal += taxAmount;
-            console.log('💰 [DEBUG] MyInvoices: Levy tax calculation', {
-                taxId: t.id,
-                taxName: t.name,
-                rate: t.rate,
-                taxAmount,
-                grandTotalAfter: grandTotal
-            });
         });
-
         totals.grandTotal = grandTotal;
-
-        // Validate all calculated values
-        const validationErrors = [];
-        Object.entries(totals).forEach(([key, value]) => {
-            if (isNaN(value) || !isFinite(value)) {
-                validationErrors.push(`${key}: ${value}`);
-            }
-        });
-
-        if (validationErrors.length > 0) {
-            console.error('❌ [ERROR] MyInvoices: Invalid values in totals calculation', {
-                validationErrors,
-                totals
-            });
-        }
-
-        console.log('✅ [DEBUG] MyInvoices: Final calculated totals', { totals, validationErrors });
         return totals;
     };
 
     const getStatusColor = (status) => {
         switch (status) {
+            case 'Customer Accepted': return 'bg-green-100 text-green-800';
             case 'Paid': return 'bg-green-100 text-green-800';
-            case 'Approved': return 'bg-blue-100 text-blue-800';
-            case 'Pending Approval': return 'bg-yellow-100 text-yellow-800';
+            case 'Approved': return 'bg-blue-100 text-blue-800'; // Ready to Send
+            case 'Awaiting Acceptance': return 'bg-amber-100 text-amber-800';
+            case 'Customer Rejected': return 'bg-red-100 text-red-800';
             case 'Rejected': return 'bg-red-100 text-red-800';
             default: return 'bg-gray-100 text-gray-800';
         }
     };
 
-    const handleSendEmail = () => {
+    const handleSendEmail = async () => {
         if (!previewData) return;
 
-        console.log('Send Email clicked!');
-        const customer = previewData.customer;
-        const invoiceId = previewData.invoiceId || 'INV-2025-XXXXX';
-        const total = previewData.totals?.grandTotal || previewData.subtotal || 0;
-        const currency = previewData.currency || 'GHS';
+        // Update status to 'Awaiting Acceptance'
+        try {
+            const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, previewData.invoiceId);
+            await updateDoc(invoiceRef, {
+                status: 'Awaiting Acceptance',
+                sentAt: new Date()
+            });
 
-        if (!customer?.contactEmail) {
-            alert('Customer email not available. Please add customer email first.');
-            return;
-        }
+            log('DOCUMENT_ACTION', `Sent Invoice ${previewData.invoiceId} to customer`, {
+                category: 'document',
+                action: 'send_invoice',
+                documentId: previewData.invoiceId
+            });
 
-        const subject = `Invoice ${invoiceId} from Margins ID Systems`;
+            // Proceed with email opening
+            const customer = previewData.customer;
+            const invoiceId = previewData.invoiceId || 'INV-2025-XXXXX';
+            const total = previewData.totals?.grandTotal || previewData.subtotal || 0;
+            const currency = previewData.currency || 'GHS';
 
-        // Format currency for email body
-        const locale = currency === 'USD' ? 'en-US' : 'en-GH';
-        const formattedTotal = new Intl.NumberFormat(locale, { style: 'currency', currency: currency }).format(total);
+            if (!customer?.contactEmail) {
+                alert('Customer email not available. Please add customer email first.');
+                return;
+            }
 
-        const body = `Dear ${customer.name},
+            const subject = `Invoice ${invoiceId} from Margins ID Systems`;
+            const locale = currency === 'USD' ? 'en-US' : 'en-GH';
+            const formattedTotal = new Intl.NumberFormat(locale, { style: 'currency', currency: currency }).format(total);
+
+            const body = `Dear ${customer.name},
 
 Please find attached your invoice ${invoiceId}.
 
@@ -539,16 +371,69 @@ ${invoiceSettings?.locationAddress?.street || 'Barnes Road, Accra Central'}
 Tel: ${invoiceSettings?.companyAddress?.tel || '+233 XX XXX XXXX'}
 Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
 
-        log('DOCUMENT_ACTION', `Initiated email for Invoice ${invoiceId}`, {
-            category: 'document',
-            action: 'email_invoice',
-            documentId: invoiceId,
-            recipient: customer.contactEmail
-        });
+            const mailtoLink = `mailto:${customer.contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            window.open(mailtoLink);
 
-        // Open default email client
-        const mailtoLink = `mailto:${customer.contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-        window.open(mailtoLink);
+            setPreviewData(null); // Close modal
+        } catch (error) {
+            console.error('Error updating invoice status:', error);
+            alert('Failed to update invoice status. Please try again.');
+        }
+    };
+
+    const handleMarkAccepted = async (invoice) => {
+        if (window.confirm(`Mark invoice ${invoice.approvedInvoiceId || invoice.id} as Accepted by Customer? This will recognize revenue.`)) {
+            try {
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id), {
+                    status: 'Customer Accepted',
+                    customerActionAt: new Date()
+                });
+                log('INVOICE_ACTION', `Marked Invoice ${invoice.id} as Customer Accepted`, {
+                    documentId: invoice.id
+                });
+            } catch (error) {
+                console.error('Error marking accepted:', error);
+            }
+        }
+    };
+
+    const handleMarkRejected = async (invoice) => {
+        const reason = prompt("Please enter the reason for rejection:");
+        if (reason) {
+            try {
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id), {
+                    status: 'Customer Rejected',
+                    customerActionAt: new Date(),
+                    rejectionReason: reason
+                });
+                log('INVOICE_ACTION', `Marked Invoice ${invoice.id} as Customer Rejected`, {
+                    documentId: invoice.id,
+                    reason
+                });
+            } catch (error) {
+                console.error('Error marking rejected:', error);
+            }
+        }
+    };
+
+    const handleRevise = async (invoice) => {
+        if (window.confirm(`Revise invoice ${invoice.approvedInvoiceId || invoice.id}? This will reset approval signatures and move it to Draft.`)) {
+            try {
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id), {
+                    status: 'Draft',
+                    controllerSignature: null,
+                    approvedBy: null,
+                    signatureTimestamp: null,
+                    rejectionHistory: arrayUnion({
+                        date: new Date().toISOString(),
+                        reason: invoice.rejectionReason || 'Manual Revision'
+                    })
+                });
+                navigateTo('invoiceEditor', { invoiceId: invoice.id });
+            } catch (error) {
+                console.error('Error revising invoice:', error);
+            }
+        }
     };
 
     const formatListAmount = (amount, currency) => {
@@ -556,10 +441,8 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
             const cur = currency === 'USD' ? 'USD' : 'GHS';
             const locale = cur === 'USD' ? 'en-US' : 'en-GH';
             const n = Number(amount) || 0;
-            const formatted = new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
-            return formatted;
+            return new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
         } catch (e) {
-            console.error('❌ [ERROR] MyInvoices: formatListAmount failed:', e);
             return String(amount || 0);
         }
     };
@@ -577,16 +460,54 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                         onEmail={handleSendEmail}
                     />
                 )}
+
+                {showStaleModal && (
+                    <StaleInvoiceModal
+                        invoices={staleInvoices}
+                        onClose={() => setShowStaleModal(false)}
+                        onAction={async (invoice, action) => {
+                            if (action === 'Customer Accepted') await handleMarkAccepted(invoice);
+                            if (action === 'Customer Rejected') await handleMarkRejected(invoice);
+                            // Refresh logic handled by onSnapshot
+                        }}
+                    />
+                )}
+
                 <header className="bg-white p-4 rounded-xl shadow-md mb-8 flex justify-between items-center">
                     <div className="flex items-center space-x-3">
-                        <h1 className="text-2xl font-bold text-gray-800">My Submitted Invoices {pageContext?.status && `(${pageContext.status})`}</h1>
-                        <div className="flex items-center text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
-                            <Icon id="clock" className="w-4 h-4 mr-1" />
-                            Sorted: Newest to Oldest (by Timestamp)
-                        </div>
+                        <h1 className="text-2xl font-bold text-gray-800">My Invoices</h1>
                     </div>
                     <button onClick={() => navigateTo('salesDashboard')} className="text-sm"><Icon id="arrow-left" className="mr-1" /> Back to Dashboard</button>
                 </header>
+
+                {/* Tabs */}
+                <div className="flex space-x-1 rounded-xl bg-blue-900/20 p-1 mb-6">
+                    <button
+                        onClick={() => setActiveTab('readyToSend')}
+                        className={`w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-blue-700 ring-white ring-opacity-60 ring-offset-2 ring-offset-blue-400 focus:outline-none focus:ring-2 ${activeTab === 'readyToSend' ? 'bg-white shadow' : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`}
+                    >
+                        Ready to Send
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('awaitingAcceptance')}
+                        className={`w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-blue-700 ring-white ring-opacity-60 ring-offset-2 ring-offset-blue-400 focus:outline-none focus:ring-2 ${activeTab === 'awaitingAcceptance' ? 'bg-white shadow' : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`}
+                    >
+                        Awaiting Acceptance
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('realizedRevenue')}
+                        className={`w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-blue-700 ring-white ring-opacity-60 ring-offset-2 ring-offset-blue-400 focus:outline-none focus:ring-2 ${activeTab === 'realizedRevenue' ? 'bg-white shadow' : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`}
+                    >
+                        Realized Revenue
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('disputed')}
+                        className={`w-full rounded-lg py-2.5 text-sm font-medium leading-5 text-blue-700 ring-white ring-opacity-60 ring-offset-2 ring-offset-blue-400 focus:outline-none focus:ring-2 ${activeTab === 'disputed' ? 'bg-white shadow' : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`}
+                    >
+                        Disputed / Rejected
+                    </button>
+                </div>
+
                 <div className="bg-white p-6 rounded-xl shadow-md">
                     {/* Filters */}
                     <div className="flex gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
@@ -631,30 +552,60 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredInvoices.map(inv => (
-                                    <tr key={inv.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-3 font-medium">{inv.approvedInvoiceId || inv.id}</td>
-                                        <td className="p-3">{inv.customerName}</td>
-                                        <td className="p-3">{inv.date}</td>
-                                        <td className="p-3 text-right">
-                                            {(() => {
-                                                const exchangeRate = inv.exchangeRate || 1;
-                                                const displayTotal = inv.currency === 'USD' ? (inv.total / exchangeRate) : inv.total;
-                                                return formatListAmount(displayTotal, inv.currency);
-                                            })()}
-                                        </td>
-                                        <td className="p-3 text-center">
-                                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(inv.status)}`}>
-                                                {inv.status}
-                                            </span>
-                                        </td>
-                                        <td className="p-3 text-center">
-                                            {inv.status === 'Approved' && (
-                                                <button onClick={() => handleShowPreview(inv)} className="text-xs bg-purple-500 text-white px-2 py-1 rounded">Send to Customer</button>
-                                            )}
+                                {filteredInvoices.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="6" className="p-8 text-center text-gray-500">
+                                            No invoices found in this category.
                                         </td>
                                     </tr>
-                                ))}
+                                ) : (
+                                    filteredInvoices.map(inv => (
+                                        <tr key={inv.id} className="border-b hover:bg-gray-50">
+                                            <td className="p-3 font-medium">{inv.approvedInvoiceId || inv.id}</td>
+                                            <td className="p-3">{inv.customerName}</td>
+                                            <td className="p-3">{inv.date}</td>
+                                            <td className="p-3 text-right">
+                                                {(() => {
+                                                    const exchangeRate = inv.exchangeRate || 1;
+                                                    const displayTotal = inv.currency === 'USD' ? (inv.total / exchangeRate) : inv.total;
+                                                    return formatListAmount(displayTotal, inv.currency);
+                                                })()}
+                                            </td>
+                                            <td className="p-3 text-center">
+                                                <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(inv.status)}`}>
+                                                    {inv.status}
+                                                </span>
+                                            </td>
+                                            <td className="p-3 text-center space-x-2">
+                                                {activeTab === 'readyToSend' && (
+                                                    <button onClick={() => handleShowPreview(inv)} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors">
+                                                        Send to Customer
+                                                    </button>
+                                                )}
+                                                {activeTab === 'awaitingAcceptance' && (
+                                                    <>
+                                                        <button onClick={() => handleMarkAccepted(inv)} className="text-xs border border-green-600 text-green-600 px-2 py-1 rounded hover:bg-green-50 transition-colors">
+                                                            Accept
+                                                        </button>
+                                                        <button onClick={() => handleMarkRejected(inv)} className="text-xs border border-red-600 text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors">
+                                                            Reject
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {activeTab === 'disputed' && (
+                                                    <button onClick={() => handleRevise(inv)} className="text-xs bg-amber-500 text-white px-3 py-1 rounded hover:bg-amber-600 transition-colors">
+                                                        Revise Quote
+                                                    </button>
+                                                )}
+                                                {activeTab === 'realizedRevenue' && (
+                                                    <span className="text-xs text-green-600 font-medium">
+                                                        <Icon id="check" className="inline w-3 h-3 mr-1" /> Revenue Recognized
+                                                    </span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
                             </tbody>
                         </table>
                     </div>

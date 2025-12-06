@@ -296,7 +296,7 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
 
     const handleApproval = async (newStatus) => {
         try {
-            // Validate signature selection for approval
+            // Validate signature selection for approval ONLY if approving
             if (newStatus === 'Approved' && !selectedSignature) {
                 setNotification({ type: 'error', message: 'Please select a signature before approving the invoice.' });
                 return;
@@ -588,23 +588,35 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId }) => {
 
                         {/* Action Buttons */}
                         <div className="mt-6 flex justify-end space-x-4">
-                            <button
-                                onClick={() => handleApproval('Rejected')}
-                                className="py-2 px-6 text-white bg-red-600 rounded-md font-semibold hover:bg-red-700"
-                            >
-                                Reject Invoice
-                            </button>
-                            <button
-                                onClick={() => handleApproval('Approved')}
-                                disabled={!selectedSignature}
-                                className={`py-2 px-6 text-white rounded-md font-semibold ${selectedSignature
-                                    ? 'bg-green-600 hover:bg-green-700'
-                                    : 'bg-gray-400 cursor-not-allowed'
-                                    }`}
-                                title={selectedSignature ? 'Approve with selected signature' : 'Please select a signature first'}
-                            >
-                                {selectedSignature ? 'Save & Approve' : 'Select Signature First'}
-                            </button>
+                            {/* If Draft, show Submit for Approval. If Pending Approval, show Approve/Reject */}
+                            {(invoice?.status === 'Draft' || !invoice?.status) ? (
+                                <button
+                                    onClick={() => handleApproval('Pending Approval')}
+                                    className="py-2 px-6 text-white bg-blue-600 rounded-md font-semibold hover:bg-blue-700"
+                                >
+                                    Submit for Approval
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={() => handleApproval('Rejected')}
+                                        className="py-2 px-6 text-white bg-red-600 rounded-md font-semibold hover:bg-red-700"
+                                    >
+                                        Reject Invoice
+                                    </button>
+                                    <button
+                                        onClick={() => handleApproval('Approved')}
+                                        disabled={!selectedSignature}
+                                        className={`py-2 px-6 text-white rounded-md font-semibold ${selectedSignature
+                                            ? 'bg-green-600 hover:bg-green-700'
+                                            : 'bg-gray-400 cursor-not-allowed'
+                                            }`}
+                                        title={selectedSignature ? 'Approve with selected signature' : 'Please select a signature first'}
+                                    >
+                                        {selectedSignature ? 'Save & Approve' : 'Select Signature First'}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
