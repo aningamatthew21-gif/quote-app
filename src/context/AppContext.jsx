@@ -34,26 +34,28 @@ export const useApp = () => {
     return context;
 };
 
-// --- SECURITY CONFIGURATION ---
+// --- SECURITY CONFIGURATION (UPDATED) ---
+// Kept for reference but checks are disabled below
 const ROLE_ACCESS_CONFIG = {
-    // Pages only Sales can see (plus shared ones)
     sales: [
         'salesDashboard',
         'quoting',
         'myInvoices',
-        'invoiceEditor', // Shared, but logic inside differs
+        'invoiceEditor',
         'customerPortal',
-        'login'
+        'login',
+        'salesInvoiceApproval',
+        'salesInvoiceReview'
     ],
-    // Pages only Controller can see
     controller: [
         'controllerDashboard',
         'salesInvoiceApproval',
         'salesInvoiceReview',
-        'invoices', // This is "All Invoices"
-        'invoiceEditor', // Shared
+        'invoices',
+        'invoiceEditor',
         'inventory',
         'customers',
+        'customerPortal', // ✅ Added this so Controller can view it later
         'taxSettings',
         'auditTrail',
         'pricingManagement',
@@ -166,9 +168,10 @@ export const AppProvider = ({ children }) => {
 
 
     const navigate = (newPage, context = null) => {
-        console.log(`Navigate to: ${newPage}`, context);
+        console.log(`Maps to: ${newPage}`, context);
 
-        // Security Check before navigating
+        // --- DISABLE FOR DEV: Security Check ---
+        /*
         if (appUser && appUser.role) {
             const allowedPages = ROLE_ACCESS_CONFIG[appUser.role];
             if (allowedPages && !allowedPages.includes(newPage)) {
@@ -177,13 +180,13 @@ export const AppProvider = ({ children }) => {
                 return;
             }
         }
+        */
 
         // Update State
         setPage(newPage);
         setPageContext(context);
 
         // Update Browser History (Push new entry)
-        // We use ?page= query param to make it look nicer, though strictly not required for this to work
         const url = new URL(window.location);
         url.searchParams.set('page', newPage);
         window.history.pushState({ page: newPage, context }, '', url);
@@ -191,7 +194,7 @@ export const AppProvider = ({ children }) => {
         // Log page navigation
         if (db && appId) {
             const username = userEmail ? userEmail.split('@')[0] : (userId || 'System');
-            logActivity(db, appId, username, 'PAGE_VIEW', `Navigated to ${newPage}`, {
+            logActivity(db, appId, username, 'PAGE_VIEW', `Mapsd to ${newPage}`, {
                 category: 'navigation',
                 page: newPage,
                 previousPage: page,
@@ -321,10 +324,8 @@ export const AppProvider = ({ children }) => {
             );
         }
 
-
-
-        // --- 2. SECURITY GUARD (Double Check) ---
-        // Even if they bypass navigate(), prevent rendering restricted components
+        // --- DISABLE FOR DEV: SECURITY GUARD (Double Check) ---
+        /*
         if (appUser && appUser.role && page !== 'login') {
             const allowedPages = ROLE_ACCESS_CONFIG[appUser.role];
             if (allowedPages && !allowedPages.includes(page)) {
@@ -335,6 +336,7 @@ export const AppProvider = ({ children }) => {
                 return <div className="p-8 text-center">Redirecting unauthorized access...</div>;
             }
         }
+        */
 
         const commonProps = {
             navigateTo: navigate,
