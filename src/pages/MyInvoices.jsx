@@ -297,10 +297,9 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
         }
     };
 
-    const handleSendEmail = async () => {
+    // Shared logic to move invoice to next stage
+    const markAsSentToCustomer = async () => {
         if (!previewData) return;
-
-        // Update status to 'Awaiting Acceptance'
         try {
             const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, previewData.invoiceId);
             await updateDoc(invoiceRef, {
@@ -308,28 +307,39 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
                 sentAt: new Date()
             });
 
-            log('DOCUMENT_ACTION', `Sent Invoice ${previewData.invoiceId} to customer`, {
+            log('DOCUMENT_ACTION', `Sent Invoice ${previewData.invoiceId} to customer (Email/Download)`, {
                 category: 'document',
                 action: 'send_invoice',
                 documentId: previewData.invoiceId
             });
+            return true;
+        } catch (error) {
+            console.error('Error updating invoice status:', error);
+            alert('Failed to update invoice status. Please try again.');
+            return false;
+        }
+    };
 
-            // Proceed with email opening
-            const customer = previewData.customer;
-            const invoiceId = previewData.invoiceId || 'INV-2025-XXXXX';
-            const total = previewData.totals?.grandTotal || previewData.subtotal || 0;
-            const currency = previewData.currency || 'GHS';
+    const handleSendEmail = async () => {
+        const success = await markAsSentToCustomer();
+        if (!success) return;
 
-            if (!customer?.contactEmail) {
-                alert('Customer email not available. Please add customer email first.');
-                return;
-            }
+        // Proceed with email opening
+        const customer = previewData.customer;
+        const invoiceId = previewData.invoiceId || 'INV-2025-XXXXX';
+        const total = previewData.totals?.grandTotal || previewData.subtotal || 0;
+        const currency = previewData.currency || 'GHS';
 
-            const subject = `Invoice ${invoiceId} from Margins ID Systems`;
-            const locale = currency === 'USD' ? 'en-US' : 'en-GH';
-            const formattedTotal = new Intl.NumberFormat(locale, { style: 'currency', currency: currency }).format(total);
+        if (!customer?.contactEmail) {
+            alert('Customer email not available. Please add customer email first.');
+            return;
+        }
 
-            const body = `Dear ${customer.name},
+        const subject = `Invoice ${invoiceId} from Margins ID Systems`;
+        const locale = currency === 'USD' ? 'en-US' : 'en-GH';
+        const formattedTotal = new Intl.NumberFormat(locale, { style: 'currency', currency: currency }).format(total);
+
+        const body = `Dear ${customer.name},
 
 Please find attached your invoice ${invoiceId}.
 
@@ -356,14 +366,17 @@ ${invoiceSettings?.locationAddress?.street || 'Barnes Road, Accra Central'}
 Tel: ${invoiceSettings?.companyAddress?.tel || '+233 XX XXX XXXX'}
 Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
 
-            const mailtoLink = `mailto:${customer.contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-            window.open(mailtoLink);
+        const mailtoLink = `mailto:${customer.contactEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        window.open(mailtoLink);
 
-            setPreviewData(null); // Close modal
-        } catch (error) {
-            console.error('Error updating invoice status:', error);
-            alert('Failed to update invoice status. Please try again.');
-        }
+        setPreviewData(null); // Close modal
+    };
+
+    // New handler for download action
+    const handleDownloadAction = async () => {
+        // Automatically move to next stage when downloaded
+        await markAsSentToCustomer();
+        setPreviewData(null); // Close modal to indicate "done"
     };
 
     const handleMarkAccepted = async (invoice) => {
@@ -469,6 +482,7 @@ Email: ${invoiceSettings?.companyAddress?.email || 'sales@margins-id.com'}`;
                         mode="invoice"
                         isDistribution={true}
                         onEmail={handleSendEmail}
+                        onDownload={handleDownloadAction}
                     />
                 )}
 

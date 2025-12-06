@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PDFService } from '../services/PDFService.js';
 import { useApp } from '../context/AppContext';
 
-export default function PreviewModal({ open, onClose, payload, mode = 'invoice', onConfirm, isDistribution = false, onEmail }) {
+export default function PreviewModal({ open, onClose, payload, mode = 'invoice', onConfirm, isDistribution = false, onEmail, onDownload }) {
   const { appId } = useApp();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -106,6 +106,11 @@ export default function PreviewModal({ open, onClose, payload, mode = 'invoice',
                     link.click();
                     document.body.removeChild(link);
                     console.log('🔵 [DEBUG] Download triggered:', fileName);
+
+                    // Notify parent if handler is provided (e.g., to update status)
+                    if (onDownload) {
+                      onDownload();
+                    }
                   }}
                   className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm flex items-center"
                 >
