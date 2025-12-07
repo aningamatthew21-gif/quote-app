@@ -379,6 +379,28 @@ const QuotingModule = ({ navigateTo, db, appId, userId }) => {
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
     const [pendingInvoicePayload, setPendingInvoicePayload] = useState(null);
 
+    // --- VIRTUAL INVENTORY STATE ---
+    const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
+    const [customItem, setCustomItem] = useState({ name: '', description: '', quantity: 1 });
+
+    const handleAddCustomItem = () => {
+        if (!customItem.name) return alert("Please enter an item name");
+
+        const newItem = {
+            id: `SOURCED-${Date.now()}`,
+            name: customItem.name,
+            description: customItem.description || 'Sourced Item',
+            quantity: Number(customItem.quantity),
+            price: 0, // Zero price triggers "Pending Pricing" status
+            type: 'sourced', // Flags this as non-inventory
+            isCustom: true
+        };
+
+        setQuoteItems(prev => [...prev, newItem]);
+        setIsCustomModalOpen(false);
+        setCustomItem({ name: '', description: '', quantity: 1 });
+    };
+
     const openPreview = () => {
         if (quoteItems.length === 0) { alert("Add items to the quote first."); return; }
         // Validation check for customer
@@ -404,10 +426,39 @@ const QuotingModule = ({ navigateTo, db, appId, userId }) => {
         if (!db || !appId || !userId) return;
         try {
             const tempId = generateTemporaryId();
-            const invoiceData = { id: tempId, invoiceNumber: tempId, customerId: selectedCustomer.id, customerName: selectedCustomer.name, customerEmail: selectedCustomer.email || '', date: new Date().toLocaleDateString(), timestamp: serverTimestamp(), dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(), status: 'Pending Approval', items: quoteItems, subtotal: totals.subtotal, taxes: taxes, taxConfiguration: taxes, orderCharges: orderCharges, totals: totals, total: totals.grandTotal, currency: quoteCurrency, exchangeRate: fxRateGhsPerUsd, createdBy: userId };
+
+            // LOGIC CHANGE: Check if pricing is needed
+            const needsPricing = quoteItems.some(item => item.type === 'sourced' || item.price === 0);
+            const initialStatus = needsPricing ? 'Pending Pricing' : 'Pending Approval';
+
+            const invoiceData = {
+                id: tempId,
+                invoiceNumber: tempId,
+                customerId: selectedCustomer.id,
+                customerName: selectedCustomer.name,
+                customerEmail: selectedCustomer.email || '',
+                date: new Date().toLocaleDateString(),
+                timestamp: serverTimestamp(),
+                dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+                status: initialStatus,
+                items: quoteItems,
+                subtotal: totals.subtotal,
+                taxes: taxes,
+                taxConfiguration: taxes,
+                orderCharges: orderCharges,
+                totals: totals,
+                total: totals.grandTotal,
+                currency: quoteCurrency,
+                exchangeRate: fxRateGhsPerUsd,
+                createdBy: userId,
+                requiresProcurement: needsPricing // <--- NEW FLAG
+            };
+
             await setDoc(doc(db, `artifacts/${appId}/public/data/invoices`, tempId), invoiceData);
             await logQuoteActivity(db, appId, userId, 'Create Quote', { id: tempId, customerName: selectedCustomer.name, amount: totals.grandTotal });
-            setNotification({ type: 'success', message: 'Quote submitted for approval successfully!' });
+
+            setNotification({ type: 'success', message: needsPricing ? 'Quote submitted for Pricing!' : 'Quote submitted for Approval!' });
+
             setQuoteItems([]); setSelectedCustomer(null); setCustomerSearch(''); setOrderCharges({ shipping: 0, handling: 0, discount: 0 });
             setTimeout(() => setNotification(null), 3000);
         } catch (error) { console.error('Failed to submit quote:', error); setNotification({ type: 'error', message: 'Failed to submit quote. Please try again.' }); }
@@ -430,6 +481,16 @@ const QuotingModule = ({ navigateTo, db, appId, userId }) => {
                             <div className="relative mb-4">
                                 <input type="text" placeholder="Search products..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" />
                                 <Icon id="search" className="absolute left-3 top-2.5 text-gray-400 w-4 h-4" />
+                            </div>
+
+                            {/* VIRTUAL INVENTORY BUTTON */}
+                            <div className="mb-4">
+                                <button
+                                    onClick={() => setIsCustomModalOpen(true)}
+                                    className="w-full py-2 border-2 border-dashed border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50 flex items-center justify-center font-medium transition-colors"
+                                >
+                                    <Icon id="plus" className="mr-2" /> Add Sourced / Custom Item
+                                </button>
                             </div>
                             <div className="h-[400px] overflow-y-auto border border-gray-100 rounded-lg">
                                 <table className="w-full text-left">
@@ -503,6 +564,33 @@ const QuotingModule = ({ navigateTo, db, appId, userId }) => {
             {addingItem && (<QuantityModal item={addingItem} onClose={() => setAddingItem(null)} onConfirm={handleConfirmAddItem} />)}
             {removingItem && (<ConfirmationModal title="Remove Item" message={`Are you sure you want to remove "${removingItem.name}" from the quote?`} onConfirm={handleConfirmRemoveItem} onCancel={() => setRemovingItem(null)} confirmText="Remove" confirmColor="bg-red-600 hover:bg-red-700" />)}
             {isPreviewOpen && pendingInvoicePayload && (<PreviewModal open={isPreviewOpen} payload={pendingInvoicePayload} mode="invoice" onClose={() => setIsPreviewOpen(false)} onConfirm={async () => { setIsPreviewOpen(false); await handleSubmitForApproval(); }} />)}
+
+            {/* ADD SOURCED ITEM MODAL */}
+            {isCustomModalOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-xl shadow-xl w-96">
+                        <h3 className="text-lg font-bold mb-4 text-gray-800">Add Sourced Item</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Item Name</label>
+                                <input type="text" className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500" value={customItem.name} onChange={e => setCustomItem({ ...customItem, name: e.target.value })} placeholder="e.g. 360 Fisheye Camera" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Description</label>
+                                <input type="text" className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500" value={customItem.description} onChange={e => setCustomItem({ ...customItem, description: e.target.value })} placeholder="Vendor/Specs..." />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Quantity</label>
+                                <input type="number" className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500" value={customItem.quantity} onChange={e => setCustomItem({ ...customItem, quantity: e.target.value })} min="1" />
+                            </div>
+                        </div>
+                        <div className="mt-6 flex justify-end space-x-3">
+                            <button onClick={() => setIsCustomModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                            <button onClick={handleAddCustomItem} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Add Item</button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <div className="fixed z-50 flex flex-col items-end" style={{ left: bubblePos.x, top: bubblePos.y, cursor: isDragging ? 'grabbing' : 'pointer' }}>
                 {isAiChatOpen && (
                     <div className="mb-4 w-96 h-[500px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden animate-fade-in-up transition-all transform origin-bottom-right absolute bottom-16 right-0">

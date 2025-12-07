@@ -306,6 +306,26 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
         setRemovingItem(null);
     };
 
+    // --- VIRTUAL INVENTORY: PRICING UPDATE ---
+    const handleSourcedPriceUpdate = (itemId, costPrice) => {
+        const margin = 32; // 32% Margin
+        const sellingPrice = Number(costPrice) * (1 + (margin / 100));
+
+        setQuoteItems(currentItems =>
+            currentItems.map(item => {
+                if (item.id === itemId) {
+                    return {
+                        ...item,
+                        costPrice: Number(costPrice),
+                        price: sellingPrice,
+                        finalPrice: sellingPrice
+                    };
+                }
+                return item;
+            })
+        );
+    };
+
 
 
     const handleApproval = async (newStatus) => {
@@ -414,7 +434,26 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
                                         <tr key={item.id} className="border-b">
                                             <td className="p-2 text-sm font-medium">{item.name}</td>
                                             <td className="p-1"><input type="number" value={item.quantity} onChange={e => handleUpdateItem(item.id, 'quantity', e.target.value)} className="w-16 text-center border-gray-300 rounded-md" min="0" /></td>
-                                            <td className="p-1 text-right text-sm font-medium">{formatAmount(displayPrice)}</td>
+                                            <td className="p-1 text-right text-sm font-medium">
+                                                {/* Logic: If it is Sourced AND I am a Controller, allow editing */}
+                                                {item.type === 'sourced' && currentUser?.role === 'controller' ? (
+                                                    <div className="flex flex-col items-end">
+                                                        <label className="text-[10px] text-gray-400">Cost Price</label>
+                                                        <input
+                                                            type="number"
+                                                            placeholder="0.00"
+                                                            className="w-24 text-right border border-blue-300 rounded px-1 py-0.5 text-sm focus:ring-2 focus:ring-blue-500 bg-blue-50"
+                                                            onChange={(e) => handleSourcedPriceUpdate(item.id, e.target.value)}
+                                                            defaultValue={item.costPrice || ''}
+                                                        />
+                                                        <span className="text-xs text-green-600 font-bold mt-1">
+                                                            Sell: {formatAmount(item.price)}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    formatAmount(displayPrice)
+                                                )}
+                                            </td>
                                             <td className="p-2 text-sm text-right font-medium">{formatAmount(itemTotal)}</td>
                                             <td className="p-2 text-center"><button onClick={() => handleRequestRemoveItem(item)} className="text-red-500 hover:text-red-700"><Icon id="trash-alt" /></button></td>
                                         </tr>

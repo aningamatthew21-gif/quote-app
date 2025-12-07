@@ -35,7 +35,7 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
         });
 
         const unsubscribe = onSnapshot(
-            query(collection(db, `artifacts/${appId}/public/data/invoices`), where("status", "==", "Pending Approval")),
+            query(collection(db, `artifacts/${appId}/public/data/invoices`), where("status", "in", ["Pending Approval", "Pending Pricing"])),
             (snapshot) => {
                 const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log('✅ [DEBUG] SalesInvoiceApproval: Pending invoices loaded', {
@@ -408,26 +408,37 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatRowAmount(displayTotal, invoice.currency)}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{itemCount} items</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                                                        <button
-                                                            onClick={() => navigateTo('salesInvoiceReview', { invoiceId: invoice.id })}
-                                                            className="text-indigo-600 hover:text-indigo-900"
-                                                        >
-                                                            Review
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleApproval(invoice.id, 'Approved')}
-                                                            disabled={!selectedSignature}
-                                                            className={`text-green-600 hover:text-green-900 ${!selectedSignature ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                            title={!selectedSignature ? 'Select a signature first' : 'Approve'}
-                                                        >
-                                                            Approve
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleApproval(invoice.id, 'Rejected')}
-                                                            className="text-red-600 hover:text-red-900"
-                                                        >
-                                                            Reject
-                                                        </button>
+                                                        {invoice.status === 'Pending Pricing' ? (
+                                                            <button
+                                                                onClick={() => navigateTo('invoiceEditor', { invoiceId: invoice.id })}
+                                                                className="text-purple-600 hover:text-purple-900 font-bold"
+                                                            >
+                                                                Price Item
+                                                            </button>
+                                                        ) : (
+                                                            <>
+                                                                <button
+                                                                    onClick={() => navigateTo('salesInvoiceReview', { invoiceId: invoice.id })}
+                                                                    className="text-indigo-600 hover:text-indigo-900"
+                                                                >
+                                                                    Review
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleApproval(invoice.id, 'Approved')}
+                                                                    disabled={!selectedSignature}
+                                                                    className={`text-green-600 hover:text-green-900 ${!selectedSignature ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                                    title={!selectedSignature ? 'Select a signature first' : 'Approve'}
+                                                                >
+                                                                    Approve
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleApproval(invoice.id, 'Rejected')}
+                                                                    className="text-red-600 hover:text-red-900"
+                                                                >
+                                                                    Reject
+                                                                </button>
+                                                            </>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             );
