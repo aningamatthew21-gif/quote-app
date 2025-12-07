@@ -9,52 +9,53 @@ import { useApp } from '../context/AppContext';
 const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     const { userEmail, appUser } = useApp();
     const username = userEmail ? userEmail.split('@')[0] : userId;
+
+    // CRITICAL: Determine Role
     const isController = appUser?.role === 'controller';
 
-    // Real-time data fetching for immediate updates
+    // Real-time data fetching
     const [invoices, setInvoices] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
     const [signatures, setSignatures] = useState([]);
-    const [signaturesLoading, setSignaturesLoading] = useState(true);
     const [selectedSignature, setSelectedSignature] = useState(null);
     const [notification, setNotification] = useState(null);
 
-
-    // Filter State
+    // Filters
     const [selectedYear, setSelectedYear] = useState('All');
     const [selectedMonth, setSelectedMonth] = useState('All');
 
-    // Real-time invoices listener for pending approval invoices
+    // 1. ROLE-BASED QUERY
     useEffect(() => {
         if (!db || !appId) return;
 
+        // Controllers see everything needing action. Sales only see what they can approve.
+        const statusesToFetch = isController
+            ? ["Pending Approval", "Pending Pricing"]
+            : ["Pending Approval"];
+
         const q = query(
             collection(db, `artifacts/${appId}/public/data/invoices`),
-            where("status", "in", ["Pending Approval", "Pending Pricing"])
+            where("status", "in", statusesToFetch)
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            // ROBUST SORTING: Newest First
             const sortedResult = result.sort((a, b) => {
                 return getInvoiceDate(b) - getInvoiceDate(a);
             });
 
             setInvoices(sortedResult);
             setIsLoading(false);
-            setError(null);
-        },
-            (err) => {
-                console.error('Error fetching invoices:', err);
-                setError(err.message);
-                setIsLoading(false);
-            }
-        );
+        }, (err) => {
+            console.error('Error fetching invoices:', err);
+            setError(err.message);
+            setIsLoading(false);
+        });
 
         return () => unsubscribe();
-    }, [db, appId]);
+    }, [db, appId, isController]); // Re-run if role changes
 
     // Load signatures for approval
     useEffect(() => {
@@ -67,16 +68,12 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
             } else {
                 setSignatures([]);
             }
-            setSignaturesLoading(false);
         }, (err) => {
             console.error('Error fetching signatures:', err);
-            setSignaturesLoading(false);
         });
 
         return () => unsubscribe();
     }, [db, appId]);
-
-
 
     // Filter Logic
     const filteredInvoices = useMemo(() => {
@@ -84,47 +81,40 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
             const date = getInvoiceDate(invoice);
             const year = date.getFullYear().toString();
             const month = (date.getMonth() + 1).toString().padStart(2, '0');
-
             const yearMatch = selectedYear === 'All' || year === selectedYear;
             const monthMatch = selectedMonth === 'All' || month === selectedMonth;
-
             return yearMatch && monthMatch;
         });
     }, [invoices, selectedYear, selectedMonth]);
 
-    // Generate Filter Options
     const { years, months } = useMemo(() => {
         const uniqueYears = new Set();
         const uniqueMonths = new Set();
-
-        invoices.forEach(invoice => {
-            const date = getInvoiceDate(invoice);
-            uniqueYears.add(date.getFullYear().toString());
-            uniqueMonths.add((date.getMonth() + 1).toString().padStart(2, '0'));
+        invoices.forEach(inv => {
+            const d = getInvoiceDate(inv);
+            uniqueYears.add(d.getFullYear().toString());
+            uniqueMonths.add((d.getMonth() + 1).toString().padStart(2, '0'));
         });
-
-        return {
-            years: Array.from(uniqueYears).sort().reverse(),
-            months: Array.from(uniqueMonths).sort()
-        };
+        return { years: Array.from(uniqueYears).sort().reverse(), months: Array.from(uniqueMonths).sort() };
     }, [invoices]);
 
-    const handleApproval = async (invoiceId, newStatus) => {
-        console.log('🔍 [DEBUG] SalesInvoiceApproval: handleApproval called', {
-            invoiceId,
-            newStatus,
-            selectedSignature: selectedSignature?.controllerName,
-            userId
-        });
-
+    const formatRowAmount = (amount, currency) => {
         try {
-            // Validate signature selection for approval
+            const cur = currency === 'USD' ? 'USD' : 'GHS';
+            const locale = cur === 'USD' ? 'en-US' : 'en-GH';
+            const n = Number(amount) || 0;
+            return new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
+        } catch (e) {
+            return String(amount || 0);
+        }
+    };
+
+    const handleApproval = async (invoiceId, newStatus) => {
+        try {
             if (newStatus === 'Approved' && !selectedSignature) {
-                console.warn('⚠️ [DEBUG] SalesInvoiceApproval: No signature selected for approval');
-                setNotification({ type: 'error', message: 'Please select a signature before approving the invoice.' });
+                setNotification({ type: 'error', message: 'Please select a signature first.' });
                 return;
             }
-
             const batch = writeBatch(db);
             const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoiceId);
             const invoice = invoices.find(inv => inv.id === invoiceId);
@@ -133,19 +123,12 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                 status: newStatus,
             };
 
-            // Add signature information if approving
             if (newStatus === 'Approved' && selectedSignature) {
                 updateData.controllerSignature = selectedSignature.signatureUrl;
                 updateData.controllerName = selectedSignature.controllerName;
                 updateData.controllerSubsidiary = selectedSignature.subsidiary;
                 updateData.signatureTimestamp = new Date().toISOString();
                 updateData.approvedBy = userId;
-
-                console.log('✍️ [DEBUG] SalesInvoiceApproval: Adding signature data to invoice:', {
-                    controllerName: selectedSignature.controllerName,
-                    subsidiary: selectedSignature.subsidiary,
-                    signatureSize: selectedSignature.signatureUrl?.length
-                });
             }
 
             batch.update(invoiceRef, updateData);
@@ -161,40 +144,19 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
 
                 // Use items array (from quote creation) or lineItems array (legacy)
                 const itemsArray = invoice.items || invoice.lineItems || [];
-                console.log('📦 [DEBUG] Stock adjustment: Processing items', {
-                    itemsCount: itemsArray.length,
-                    items: itemsArray.map(item => ({
-                        id: item.id,
-                        name: item.name,
-                        quantity: item.quantity
-                    }))
-                });
-
                 itemsArray.forEach(item => {
                     const inventoryItem = inventory[item.id];
                     if (inventoryItem) {
                         const invItemRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
                         const newStock = inventoryItem.stock - (item.quantity || 0);
-                        console.log('📦 [DEBUG] Stock adjustment: Item processed', {
-                            itemId: item.id,
-                            itemName: item.name,
-                            currentStock: inventoryItem.stock,
-                            quantity: item.quantity,
-                            newStock
-                        });
                         batch.update(invItemRef, { stock: newStock });
-                    } else {
-                        console.warn('⚠️ [DEBUG] Stock adjustment: Inventory item not found', {
-                            itemId: item.id,
-                            itemName: item.name
-                        });
                     }
                 });
             }
 
             await batch.commit();
 
-            // Optimistic UI Update: Remove the approved/rejected invoice from the list immediately
+            // Optimistic UI Update
             setInvoices(prevInvoices => prevInvoices.filter(inv => inv.id !== invoiceId));
 
             await logInvoiceActivity(db, appId, userId, newStatus === 'Approved' ? 'Approved' : 'Rejected', invoice, {
@@ -206,34 +168,11 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                 itemCount: invoice?.lineItems?.length || 0
             });
 
-            setNotification({ type: 'success', message: `Invoice ${invoiceId} has been ${newStatus.toLowerCase()}.` });
+            setNotification({ type: 'success', message: `Invoice ${newStatus} successfully` });
             setTimeout(() => setNotification(null), 3000);
-
-            console.log('✅ [DEBUG] SalesInvoiceApproval: Approval process completed successfully');
-        } catch (error) {
-            console.error('❌ [ERROR] SalesInvoiceApproval: handleApproval failed:', error);
-            setNotification({
-                type: 'error',
-                message: `Failed to ${newStatus.toLowerCase()} invoice. Error: ${error.code || error.message || 'Unknown error'}`
-            });
-
-            // Re-fetch or revert state if needed, but onSnapshot should handle consistency eventually.
-        }
-    };
-
-
-
-    const formatRowAmount = (amount, currency) => {
-        try {
-            const cur = currency === 'USD' ? 'USD' : 'GHS';
-            const locale = cur === 'USD' ? 'en-US' : 'en-GH';
-            const n = Number(amount) || 0;
-            const formatted = new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
-            console.log('🔎 [DEBUG] SalesInvoiceApproval: formatRowAmount', { amount, currency: cur, formatted });
-            return formatted;
         } catch (e) {
-            console.error('❌ [ERROR] SalesInvoiceApproval: formatRowAmount failed:', e);
-            return String(amount || 0);
+            console.error(e);
+            setNotification({ type: 'error', message: 'Action failed' });
         }
     };
 
@@ -248,13 +187,15 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                         <div className="flex items-center justify-between">
                             <div>
                                 <button
-                                    onClick={() => navigateTo('salesDashboard')}
+                                    onClick={() => navigateTo(isController ? 'controllerDashboard' : 'salesDashboard')}
                                     className="flex items-center text-blue-600 hover:text-blue-800 mb-2"
                                 >
                                     <Icon id="arrow-left" className="mr-2" />
-                                    Back to Sales Dashboard
+                                    Back to Dashboard
                                 </button>
-                                <h1 className="text-3xl font-bold text-gray-900">Invoice Approval</h1>
+                                <h1 className="text-3xl font-bold text-gray-900">
+                                    {isController ? 'Controller Approval & Pricing' : 'Sales Approval'}
+                                </h1>
                                 <p className="mt-2 text-gray-600">
                                     Review and approve pending invoices. Select a signature before approving.
                                 </p>
@@ -266,39 +207,24 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                         </div>
                     </div>
 
-                    {/* Notification */}
                     {notification && (
-                        <div className={`mb-6 p-4 rounded-md ${notification.type === 'success'
-                            ? 'bg-green-50 text-green-800 border border-green-200'
-                            : 'bg-red-50 text-red-800 border border-red-200'
-                            }`}>
+                        <div className={`mb-6 p-4 rounded-md ${notification.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
                             {notification.message}
                         </div>
                     )}
 
-                    {/* Signature Selection */}
-                    {!signaturesLoading && signatures.length > 0 && (
+                    {!isLoading && signatures.length > 0 && (
                         <div className="bg-white rounded-lg shadow p-6 mb-6">
                             <h3 className="text-lg font-semibold mb-4">Select Approval Signature</h3>
                             <div className="space-y-3">
-                                <label className="block text-sm font-medium text-blue-700">
-                                    Controller Signature:
-                                </label>
+                                <label className="block text-sm font-medium text-blue-700">Controller Signature:</label>
                                 <select
-                                    value={selectedSignature?.id || ''}
-                                    onChange={(e) => {
-                                        const signature = signatures.find(s => s.id === e.target.value);
-                                        console.log('🔍 [DEBUG] SalesInvoiceApproval: Signature selected:', signature);
-                                        setSelectedSignature(signature);
-                                    }}
                                     className="w-full p-3 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    value={selectedSignature?.id || ''}
+                                    onChange={(e) => setSelectedSignature(signatures.find(s => s.id === e.target.value))}
                                 >
                                     <option value="">Choose a signature...</option>
-                                    {signatures.map(sig => (
-                                        <option key={sig.id} value={sig.id}>
-                                            {sig.controllerName} - {sig.subsidiary}
-                                        </option>
-                                    ))}
+                                    {signatures.map(s => <option key={s.id} value={s.id}>{s.controllerName} - {s.subsidiary}</option>)}
                                 </select>
                                 {selectedSignature && (
                                     <div className="text-sm text-green-600">
@@ -309,10 +235,9 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                         </div>
                     )}
 
-                    {/* Invoices Table */}
-                    <div className="bg-white rounded-lg shadow">
+                    <div className="bg-white rounded-lg shadow overflow-hidden">
                         <div className="px-6 py-4 border-b border-gray-200">
-                            <h3 className="text-lg font-semibold">Pending Approval Invoices</h3>
+                            <h3 className="text-lg font-semibold">Invoices Requiring Attention</h3>
                             <p className="text-sm text-gray-600">Total: {invoices.length} invoices</p>
                         </div>
 
@@ -324,7 +249,6 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                             </div>
                         ) : (
                             <div className="overflow-x-auto">
-                                {/* Filters */}
                                 <div className="flex gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
@@ -360,23 +284,14 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invoice ID</th>
                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                            <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-200">
                                         {filteredInvoices.map(invoice => {
-                                            console.log('🔍 [DEBUG] SalesInvoiceApproval: Processing invoice for table', {
-                                                invoiceId: invoice.id,
-                                                hasItems: !!invoice.items,
-                                                itemsCount: invoice.items?.length || 0,
-                                                hasLineItems: !!invoice.lineItems,
-                                                lineItemsCount: invoice.lineItems?.length || 0,
-                                                rawInvoice: invoice
-                                            });
-
-                                            // Calculate total items (handling both items and lineItems arrays)
+                                            // Calculate total items
                                             const itemCount = (invoice.items?.length || 0) + (invoice.lineItems?.length || 0);
 
                                             // Convert total if USD
@@ -385,22 +300,31 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
 
                                             return (
                                                 <tr key={invoice.id}>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                                        {invoice.approvedInvoiceId || invoice.id}
-                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{invoice.approvedInvoiceId || invoice.id}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{invoice.customerName}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{invoice.date}</td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatRowAmount(displayTotal, invoice.currency)}</td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{itemCount} items</td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                                                        {invoice.status === 'Pending Pricing' ? (
+                                                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                                                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${invoice.status === 'Pending Pricing' ? 'bg-purple-100 text-purple-800' : 'bg-amber-100 text-amber-800'
+                                                            }`}>
+                                                            {invoice.status}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                                                        {formatRowAmount(displayTotal, invoice.currency)}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-center space-x-2">
+                                                        {/* CONTROLLER ACTION: PRICING */}
+                                                        {isController && invoice.status === 'Pending Pricing' && (
                                                             <button
                                                                 onClick={() => navigateTo('invoiceEditor', { invoiceId: invoice.id })}
                                                                 className="text-purple-600 hover:text-purple-900 border border-purple-200 px-3 py-1 rounded bg-purple-50"
                                                             >
                                                                 <Icon id="edit" className="mr-1 inline" /> Price Item
                                                             </button>
-                                                        ) : (
+                                                        )}
+
+                                                        {/* COMMON ACTION: APPROVAL */}
+                                                        {invoice.status === 'Pending Approval' && (
                                                             <>
                                                                 <button
                                                                     onClick={() => navigateTo('salesInvoiceReview', { invoiceId: invoice.id })}

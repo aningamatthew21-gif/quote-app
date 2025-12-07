@@ -5,8 +5,12 @@ import { formatCurrency } from '../utils/formatting';
 import { useDebounce } from '../hooks/useDebounce';
 import { useActivityLog } from '../hooks/useActivityLog';
 import { usePagination } from '../hooks/usePagination';
+import { useApp } from '../context/AppContext';
 
 const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
+    const { appUser } = useApp();
+    const isController = appUser?.role === 'controller';
+
     const [searchTerm, setSearchTerm] = useState("");
     const debouncedSearchTerm = useDebounce(searchTerm, 1000);
 
@@ -71,6 +75,7 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
             case 'Approved': return 'bg-blue-100 text-blue-800'; // Ready to Send
             case 'Awaiting Acceptance': return 'bg-amber-100 text-amber-800';
             case 'Pending Approval': return 'bg-yellow-100 text-yellow-800';
+            case 'Pending Pricing': return 'bg-purple-100 text-purple-800';
             case 'Rejected': return 'bg-red-100 text-red-800';
             case 'Customer Rejected': return 'bg-red-100 text-red-800';
             default: return 'bg-gray-100 text-gray-800';
@@ -225,7 +230,14 @@ const AllInvoices = ({ navigateTo, db, appId, pageContext }) => {
                                                 </span>
                                             </td>
                                             <td className="p-3 text-center space-x-2">
-                                                {inv.status === 'Pending Approval' ? (
+                                                {inv.status === 'Pending Pricing' && isController ? (
+                                                    <button
+                                                        onClick={() => navigateTo('invoiceEditor', { invoiceId: inv.id })}
+                                                        className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
+                                                    >
+                                                        <Icon id="edit" className="mr-1 inline" /> Price Item
+                                                    </button>
+                                                ) : inv.status === 'Pending Approval' ? (
                                                     <button onClick={() => navigateTo('invoiceEditor', { invoiceId: inv.id })} className="text-xs bg-blue-500 text-white px-3 py-1 rounded">Edit / Approve</button>
                                                 ) : (
                                                     <button onClick={() => navigateTo('customerPortal', inv.customerId)} className="text-blue-600 font-medium text-xs">View Portal</button>
