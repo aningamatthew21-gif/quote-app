@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, doc, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, doc, writeBatch, increment } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import Notification from '../components/common/Notification';
 import QuantityModal from '../components/modals/QuantityModal';
@@ -352,12 +352,17 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
                     updateData.approvedBy = userId;
                 }
 
+                // OPTIMIZED STOCK DEDUCTION (Atomic)
                 quoteItems.forEach(item => {
-                    const inventoryItem = inventory.find(invItem => invItem.id === item.id);
-                    if (inventoryItem) {
+                    // Only deduct if it has an ID and is not a sourced item (unless sourced items are tracked in inventory, which usually they aren't)
+                    // Assuming sourced items might not have an inventory ID or we don't track their stock the same way.
+                    // If item.type is 'sourced', we skip.
+                    if (item.id && item.type !== 'sourced') {
                         const invItemRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
-                        const newStock = inventoryItem.stock - item.quantity;
-                        batch.update(invItemRef, { stock: newStock });
+                        // Atomic decrement
+                        batch.update(invItemRef, {
+                            stock: increment(-Math.abs(Number(item.quantity) || 0))
+                        });
                     }
                 });
             }
