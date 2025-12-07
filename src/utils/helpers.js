@@ -21,35 +21,30 @@ export const removeUndefinedValues = (obj) => {
 export const getInvoiceDate = (invoice) => {
     if (!invoice) return new Date(0);
 
-    // 1. Try standard timestamp fields
-    const timestamp = invoice.createdAt || invoice.timestamp || invoice.date;
-
-    if (timestamp) {
-        // Handle Firestore Timestamp (has .toDate())
-        if (typeof timestamp.toDate === 'function') {
-            return timestamp.toDate();
-        }
-        // Handle Date object
-        if (timestamp instanceof Date) {
-            return timestamp;
-        }
-        // Handle string or number
-        return new Date(timestamp);
+    // 1. Priority: Firestore Timestamp (Object with seconds)
+    if (invoice.timestamp && typeof invoice.timestamp.toDate === 'function') {
+        return invoice.timestamp.toDate();
+    }
+    if (invoice.timestamp && invoice.timestamp.seconds) {
+        return new Date(invoice.timestamp.seconds * 1000);
     }
 
-    // 2. Fallback: Extract from Invoice ID (INV-YYYY-TIMESTAMP)
-    // Format: INV-2025-1732801234567
-    if (invoice.id && invoice.id.startsWith('INV-')) {
-        const parts = invoice.id.split('-');
-        if (parts.length >= 3) {
-            const ts = Number(parts[2]);
-            if (!isNaN(ts)) {
-                return new Date(ts);
-            }
-        }
+    // 2. Secondary: 'sentAt' or 'createdAt' dates if available
+    if (invoice.sentAt && typeof invoice.sentAt.toDate === 'function') {
+        return invoice.sentAt.toDate();
     }
 
-    return new Date(0); // Default to epoch if nothing found
+    // 3. Fallback: Date string (Handle DD/MM/YYYY format common in manual entry)
+    if (typeof invoice.date === 'string') {
+        const parts = invoice.date.split('/');
+        if (parts.length === 3) {
+            // Assume DD/MM/YYYY if typical string
+            return new Date(parts[2], parts[1] - 1, parts[0]);
+        }
+        return new Date(invoice.date);
+    }
+
+    return new Date(0); // Default to old date to push to bottom
 };
 
 /**

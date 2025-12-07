@@ -7,8 +7,9 @@ import { getInvoiceDate } from '../utils/helpers';
 import { useApp } from '../context/AppContext';
 
 const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
-    const { userEmail } = useApp();
+    const { userEmail, appUser } = useApp();
     const username = userEmail ? userEmail.split('@')[0] : userId;
+    const isController = appUser?.role === 'controller';
 
     // Real-time data fetching for immediate updates
     const [invoices, setInvoices] = useState([]);
@@ -28,41 +29,25 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     useEffect(() => {
         if (!db || !appId) return;
 
-        console.log('🔍 [DEBUG] SalesInvoiceApproval: Loading pending invoices', {
-            appId,
-            collectionPath: `artifacts/${appId}/public/data/invoices`,
-            statusFilter: 'Pending Approval'
-        });
+        const q = query(
+            collection(db, `artifacts/${appId}/public/data/invoices`),
+            where("status", "in", ["Pending Approval", "Pending Pricing"])
+        );
 
-        const unsubscribe = onSnapshot(
-            query(collection(db, `artifacts/${appId}/public/data/invoices`), where("status", "in", ["Pending Approval", "Pending Pricing"])),
-            (snapshot) => {
-                const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                console.log('✅ [DEBUG] SalesInvoiceApproval: Pending invoices loaded', {
-                    count: result.length,
-                    invoices: result.map(inv => ({
-                        id: inv.id,
-                        customerName: inv.customerName,
-                        status: inv.status,
-                        hasItems: !!inv.items,
-                        itemsCount: inv.items?.length || 0,
-                        hasLineItems: !!inv.lineItems,
-                        lineItemsCount: inv.lineItems?.length || 0,
-                        hasTotals: !!inv.totals,
-                        totals: inv.totals
-                    }))
-                });
-                const sortedResult = result.sort((a, b) => {
-                    const dateA = getInvoiceDate(a);
-                    const dateB = getInvoiceDate(b);
-                    return dateB - dateA; // Newest first
-                });
-                setInvoices(sortedResult);
-                setIsLoading(false);
-                setError(null);
-            },
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // ROBUST SORTING: Newest First
+            const sortedResult = result.sort((a, b) => {
+                return getInvoiceDate(b) - getInvoiceDate(a);
+            });
+
+            setInvoices(sortedResult);
+            setIsLoading(false);
+            setError(null);
+        },
             (err) => {
-                console.error('❌ [ERROR] SalesInvoiceApproval: Error fetching pending invoices:', err);
+                console.error('Error fetching invoices:', err);
                 setError(err.message);
                 setIsLoading(false);
             }
@@ -411,9 +396,9 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
                                                         {invoice.status === 'Pending Pricing' ? (
                                                             <button
                                                                 onClick={() => navigateTo('invoiceEditor', { invoiceId: invoice.id })}
-                                                                className="text-purple-600 hover:text-purple-900 font-bold"
+                                                                className="text-purple-600 hover:text-purple-900 border border-purple-200 px-3 py-1 rounded bg-purple-50"
                                                             >
-                                                                Price Item
+                                                                <Icon id="edit" className="mr-1 inline" /> Price Item
                                                             </button>
                                                         ) : (
                                                             <>

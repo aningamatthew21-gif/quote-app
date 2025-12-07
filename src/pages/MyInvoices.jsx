@@ -26,9 +26,7 @@ const MyInvoices = ({ navigateTo, db, appId, userId, pageContext }) => {
             (snapshot) => {
                 const result = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 const sortedInvoices = [...result].sort((a, b) => {
-                    const dateA = getInvoiceDate(a);
-                    const dateB = getInvoiceDate(b);
-                    return dateB - dateA;
+                    return getInvoiceDate(b) - getInvoiceDate(a);
                 });
                 setMyInvoices(sortedInvoices);
                 setInvoicesLoading(false);

@@ -451,6 +451,7 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
                                                         </span>
                                                     </div>
                                                 ) : (
+                                                    // Sales users or non-sourced items just see the price
                                                     formatAmount(displayPrice)
                                                 )}
                                             </td>
