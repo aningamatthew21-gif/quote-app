@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, writeBatch, increment } from 'firebase/firestore';
 import StaleInvoiceModal from './modals/StaleInvoiceModal';
 import { useApp } from '../context/AppContext';
+import { logActivity } from '../utils/logger';
 
 const GlobalStaleCheck = () => {
     // Access global context. 
@@ -58,20 +59,32 @@ const GlobalStaleCheck = () => {
 
     const handleStaleAction = async (invoice, action) => {
         try {
+            const batch = writeBatch(db);
             const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id);
 
-            const updates = {
-                customerActionAt: new Date().toISOString()
-            };
-
             if (action === 'Customer Accepted') {
-                updates.status = 'Customer Accepted';
+                batch.update(invoiceRef, {
+                    status: 'Customer Accepted',
+                    customerActionAt: new Date().toISOString()
+                });
             } else if (action === 'Customer Rejected') {
-                updates.status = 'Customer Rejected';
-                updates.rejectionReason = 'Marked via Stale Alert';
+                batch.update(invoiceRef, {
+                    status: 'Customer Rejected',
+                    customerActionAt: new Date().toISOString(),
+                    rejectionReason: 'Marked via Stale Alert'
+                });
+
+                // CRITICAL FIX: Restore Inventory
+                const itemsToRestore = invoice.items || invoice.lineItems || [];
+                itemsToRestore.forEach(item => {
+                    if (item.id) {
+                        const invRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
+                        batch.update(invRef, { stock: increment(Number(item.quantity) || 0) });
+                    }
+                });
             }
 
-            await updateDoc(invoiceRef, updates);
+            await batch.commit();
 
             // Remove processed invoice from the list
             setStaleInvoices(prev => prev.filter(inv => inv.id !== invoice.id));
@@ -80,6 +93,10 @@ const GlobalStaleCheck = () => {
             if (staleInvoices.length <= 1) {
                 setShowStaleModal(false);
             }
+
+            // Log activity
+            await logActivity(db, appId, userId, 'STALE_ACTION', `Resolved stale invoice ${invoice.id} as ${action}`, { category: 'invoice' });
+
         } catch (error) {
             console.error("Error updating stale invoice:", error);
             alert("Update failed. Check console.");

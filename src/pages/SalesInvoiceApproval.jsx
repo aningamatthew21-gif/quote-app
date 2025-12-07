@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, where, doc, writeBatch, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, doc, writeBatch, getDocs, increment } from 'firebase/firestore';
 import Icon from '../components/common/Icon';
 import { formatCurrency } from '../utils/formatting';
 import { logInvoiceActivity } from '../utils/logger';
@@ -133,23 +133,21 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
 
             batch.update(invoiceRef, updateData);
 
-            // If approving, adjust stock levels
+            // OPTIMIZED STOCK DEDUCTION
             if (newStatus === 'Approved' && invoice) {
-                // Load inventory to get current stock levels
-                const inventorySnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/inventory`));
-                const inventory = {};
-                inventorySnapshot.forEach(doc => {
-                    inventory[doc.id] = doc.data();
-                });
-
-                // Use items array (from quote creation) or lineItems array (legacy)
                 const itemsArray = invoice.items || invoice.lineItems || [];
+
+                console.log('📦 [DEBUG] Optimizing Stock Deduction for:', itemsArray.length, 'items');
+
                 itemsArray.forEach(item => {
-                    const inventoryItem = inventory[item.id];
-                    if (inventoryItem) {
+                    if (item.id && item.type !== 'sourced') { // Don't deduct stock for sourced items/services
                         const invItemRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
-                        const newStock = inventoryItem.stock - (item.quantity || 0);
-                        batch.update(invItemRef, { stock: newStock });
+
+                        // MAGIC LINE: Atomic decrement. 
+                        // It subtracts quantity regardless of what the current number is. Safe against race conditions.
+                        batch.update(invItemRef, {
+                            stock: increment(-Math.abs(Number(item.quantity) || 0))
+                        });
                     }
                 });
             }
