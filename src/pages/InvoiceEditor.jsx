@@ -341,6 +341,13 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
 
             const updateData = {
                 status: newStatus,
+                // CRITICAL FIX: Save updated items, totals, and charges to DB
+                items: quoteItems,
+                totals: totals,
+                subtotal: totals.subtotal,
+                total: totals.grandTotal, // Important for revenue analytics
+                orderCharges: orderCharges,
+                taxes: taxes,
             };
 
             if (newStatus === 'Approved') {
@@ -352,14 +359,12 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
                     updateData.approvedBy = userId;
                 }
 
-                // OPTIMIZED STOCK DEDUCTION (Atomic)
+                // Inventory Deduction using safe increment(-qty)
                 quoteItems.forEach(item => {
-                    // Only deduct if it has an ID and is not a sourced item (unless sourced items are tracked in inventory, which usually they aren't)
-                    // Assuming sourced items might not have an inventory ID or we don't track their stock the same way.
-                    // If item.type is 'sourced', we skip.
+                    // Only deduct stock if it's NOT a virtual/sourced item
                     if (item.id && item.type !== 'sourced') {
                         const invItemRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
-                        // Atomic decrement
+                        // Safe atomic decrement
                         batch.update(invItemRef, {
                             stock: increment(-Math.abs(Number(item.quantity) || 0))
                         });
