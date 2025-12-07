@@ -307,18 +307,21 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
     };
 
     // --- VIRTUAL INVENTORY: PRICING UPDATE ---
-    const handleSourcedPriceUpdate = (itemId, costPrice) => {
+    const handleSourcedPriceUpdate = (itemId, costPriceGhs) => {
         const margin = 32; // 32% Margin
-        const sellingPrice = Number(costPrice) * (1 + (margin / 100));
+        const cost = parseFloat(costPriceGhs) || 0;
+
+        // Selling Price is always calculated in Base Currency (GHS)
+        const sellingPriceGhs = cost * (1 + (margin / 100));
 
         setQuoteItems(currentItems =>
             currentItems.map(item => {
                 if (item.id === itemId) {
                     return {
                         ...item,
-                        costPrice: Number(costPrice),
-                        price: sellingPrice,
-                        finalPrice: sellingPrice
+                        costPrice: cost,         // Store Base Cost (GHS)
+                        price: sellingPriceGhs,  // Store Base Sell (GHS)
+                        finalPrice: sellingPriceGhs
                     };
                 }
                 return item;
@@ -348,6 +351,8 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
                 total: totals.grandTotal, // Important for revenue analytics
                 orderCharges: orderCharges,
                 taxes: taxes,
+                currency: currency,          // Ensure this is saved
+                exchangeRate: fxRateGhsPerUsd // Ensure this is saved
             };
 
             if (newStatus === 'Approved') {
@@ -448,7 +453,7 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
                                                 {/* Logic: If it is Sourced AND I am a Controller, allow editing */}
                                                 {item.type === 'sourced' && currentUser?.role === 'controller' ? (
                                                     <div className="flex flex-col items-end">
-                                                        <label className="text-[10px] text-gray-400">Cost Price</label>
+                                                        <label className="text-[10px] text-gray-400">Cost (GHS)</label>
                                                         <input
                                                             type="number"
                                                             placeholder="0.00"
