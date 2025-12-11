@@ -59,25 +59,25 @@ const GlobalStaleCheck = () => {
 
     const handleStaleAction = async (invoice, action) => {
         try {
-            const batch = writeBatch(db);
+            const batch = writeBatch(db); // Use batch for safety
             const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoice.id);
 
             if (action === 'Customer Accepted') {
                 batch.update(invoiceRef, {
                     status: 'Customer Accepted',
-                    customerActionAt: new Date().toISOString()
+                    customerActionAt: new Date()
                 });
             } else if (action === 'Customer Rejected') {
                 batch.update(invoiceRef, {
                     status: 'Customer Rejected',
-                    customerActionAt: new Date().toISOString(),
-                    rejectionReason: 'Marked via Stale Alert'
+                    customerActionAt: new Date(),
+                    rejectionReason: 'Marked as rejected via Stale Alert'
                 });
 
                 // CRITICAL FIX: Restore Inventory
                 const itemsToRestore = invoice.items || invoice.lineItems || [];
                 itemsToRestore.forEach(item => {
-                    if (item.id) {
+                    if (item.id && item.type !== 'sourced') {
                         const invRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
                         batch.update(invRef, { stock: increment(Number(item.quantity) || 0) });
                     }
@@ -86,20 +86,16 @@ const GlobalStaleCheck = () => {
 
             await batch.commit();
 
-            // Remove processed invoice from the list
+            // Remove the handled invoice from the local popup list
             setStaleInvoices(prev => prev.filter(inv => inv.id !== invoice.id));
 
-            // Close modal if no more invoices
+            // Close modal if list is empty
             if (staleInvoices.length <= 1) {
                 setShowStaleModal(false);
             }
-
-            // Log activity
-            await logActivity(db, appId, userId, 'STALE_ACTION', `Resolved stale invoice ${invoice.id} as ${action}`, { category: 'invoice' });
-
-        } catch (error) {
-            console.error("Error updating stale invoice:", error);
-            alert("Update failed. Check console.");
+        } catch (err) {
+            console.error("Error updating stale invoice:", err);
+            alert("Could not update invoice. Please try again.");
         }
     };
 

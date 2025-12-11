@@ -148,17 +148,23 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
         return () => unsubscribe();
     }, [db, appId, invoiceId, customers]);
 
-    // Load available signatures for approval
+    // Load available signatures (WITH SECURITY FILTER)
     useEffect(() => {
         if (!db || !appId) return;
 
         const signaturesRef = doc(db, `artifacts/${appId}/public/data/settings`, 'signatures');
         const unsubscribe = onSnapshot(signaturesRef, (docSnap) => {
             if (docSnap.exists()) {
-                const signaturesData = docSnap.data().signatures || [];
-                setSignatures(signaturesData);
-                if (!selectedSignature && signaturesData.length > 0) {
-                    setSelectedSignature(signaturesData[0]);
+                const allSignatures = docSnap.data().signatures || [];
+
+                // SECURITY FIX: Only show signatures belonging to THIS logged-in user
+                const mySignatures = allSignatures.filter(s => s.createdBy === userId);
+
+                setSignatures(mySignatures);
+
+                // Auto-select if there's only one
+                if (!selectedSignature && mySignatures.length > 0) {
+                    setSelectedSignature(mySignatures[0]);
                 }
             } else {
                 setSignatures([]);
@@ -167,7 +173,7 @@ const InvoiceEditor = ({ navigateTo, db, appId, pageContext, userId, currentUser
         });
 
         return () => unsubscribe();
-    }, [db, appId, selectedSignature]);
+    }, [db, appId, selectedSignature, userId]);
 
     // Fetch Exchange Rates
     useEffect(() => {

@@ -3,7 +3,7 @@
  * Implements landed cost calculation, markup/margin logic, and proper quote lifecycle
  */
 
-import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, query, where, getDocs, writeBatch, increment } from 'firebase/firestore';
 
 /**
  * Quote Data Model - Industry Standard Structure
@@ -15,20 +15,20 @@ export const QUOTE_SCHEMA = {
   createdBy: 'string', // userId
   customerId: 'string',
   customerName: 'string',
-  
+
   // Quote metadata
   date: 'string', // ISO date
   expiresAt: 'string', // ISO date
   incoterm: 'string', // EXW, FOB, CIF, DDP, etc.
   currency: 'string', // GHS, USD, etc.
-  
+
   // Line items with cost breakdown
   lineItems: [
     {
       sku: 'string',
       description: 'string',
       quantity: 'number',
-      
+
       // Cost components (snapshot at quote time)
       unitCost: 'number', // Base COGS
       costBreakdown: {
@@ -38,7 +38,7 @@ export const QUOTE_SCHEMA = {
         packaging: 'number',
         other: 'number'
       },
-      
+
       // Calculated values
       unitLandedCost: 'number', // unitCost + all cost components
       markupPercent: 'number', // Applied markup
@@ -47,7 +47,7 @@ export const QUOTE_SCHEMA = {
       lineTotal: 'number' // unitPrice * quantity
     }
   ],
-  
+
   // Order-level charges
   orderLevelCharges: {
     shipping: 'number',
@@ -55,7 +55,7 @@ export const QUOTE_SCHEMA = {
     handling: 'number',
     orderDiscount: 'number'
   },
-  
+
   // Calculated totals
   totals: {
     subTotal: 'number',
@@ -64,11 +64,11 @@ export const QUOTE_SCHEMA = {
     total: 'number',
     grossMarginPercent: 'number'
   },
-  
+
   // Additional fields
   notes: 'string',
   terms: 'string',
-  
+
   // Audit trail
   audit: {
     computedBy: 'string',
@@ -96,7 +96,7 @@ export const INVENTORY_SCHEMA_EXTENDED = {
   stock: 'number',
   price: 'number', // Legacy field - will be calculated
   restockLimit: 'number',
-  
+
   // New cost component fields
   unitCost: 'number', // Base COGS (required)
   weightKg: 'number', // For allocation calculations
@@ -105,7 +105,7 @@ export const INVENTORY_SCHEMA_EXTENDED = {
     width: 'number',
     height: 'number'
   },
-  
+
   // Cost breakdown per unit
   costComponents: {
     inboundFreightPerUnit: 'number',
@@ -114,11 +114,11 @@ export const INVENTORY_SCHEMA_EXTENDED = {
     packagingPerUnit: 'number',
     otherPerUnit: 'number'
   },
-  
+
   // Pricing overrides
   markupOverridePercent: 'number', // Optional per-item markup
   pricingTier: 'string', // standard, premium, budget
-  
+
   // Metadata
   updatedAt: 'string',
   updatedBy: 'string'
@@ -129,28 +129,28 @@ export const INVENTORY_SCHEMA_EXTENDED = {
  */
 export const PRICING_SETTINGS_SCHEMA = {
   id: 'pricing',
-  
+
   // Default pricing rules
   defaultMarkupPercent: 'number',
   defaultMarginPercent: 'number',
   pricingMode: 'string', // 'markup' or 'margin'
-  
+
   // Allocation methods
   allocationMethod: 'string', // 'weight' | 'value' | 'equal'
   roundingDecimals: 'number',
-  
+
   // Default terms
   defaultIncoterm: 'string',
   defaultCurrency: 'string',
   defaultQuoteExpiryDays: 'number',
-  
+
   // Approval thresholds
   approvalThresholds: {
     minMarginPercent: 'number',
     maxDiscountPercent: 'number',
     requireApprovalAbove: 'number' // Order value threshold
   },
-  
+
   // Tax rules
   taxRules: {
     defaultRate: 'number',
@@ -175,32 +175,32 @@ export class QuoteCalculator {
     try {
       // 1. Fetch pricing settings
       const pricingSettings = await this.getPricingSettings();
-      
+
       // 2. Validate and enrich line items with inventory data
       const enrichedLineItems = await this.enrichLineItems(quoteDraft.lineItems);
-      
+
       // 3. Allocate order-level charges
       const allocations = this.allocateOrderCharges(
-        enrichedLineItems, 
-        quoteDraft.orderLevelCharges, 
+        enrichedLineItems,
+        quoteDraft.orderLevelCharges,
         pricingSettings.allocationMethod
       );
-      
+
       // 4. Calculate landed costs and prices
       const calculatedItems = this.calculateItemPrices(
-        enrichedLineItems, 
-        allocations, 
+        enrichedLineItems,
+        allocations,
         pricingSettings
       );
-      
+
       // 5. Calculate totals
       const totals = this.calculateTotals(
-        calculatedItems, 
-        quoteDraft.orderLevelCharges, 
+        calculatedItems,
+        quoteDraft.orderLevelCharges,
         quoteDraft.customerId,
         pricingSettings
       );
-      
+
       // 6. Build final quote object
       const computedQuote = {
         ...quoteDraft,
@@ -212,9 +212,9 @@ export class QuoteCalculator {
           validated: true
         }
       };
-      
+
       return computedQuote;
-      
+
     } catch (error) {
       console.error('Quote calculation error:', error);
       throw new Error(`Quote calculation failed: ${error.message}`);
@@ -227,7 +227,7 @@ export class QuoteCalculator {
   async getPricingSettings() {
     const settingsRef = doc(this.db, `artifacts/${this.appId}/public/data/settings`, 'pricing');
     const settingsSnap = await getDoc(settingsRef);
-    
+
     if (!settingsSnap.exists()) {
       // Return default settings if none exist
       return {
@@ -248,7 +248,7 @@ export class QuoteCalculator {
         }
       };
     }
-    
+
     return settingsSnap.data();
   }
 
@@ -258,13 +258,13 @@ export class QuoteCalculator {
   async enrichLineItems(lineItems) {
     const skus = [...new Set(lineItems.map(li => li.sku))];
     const inventoryMap = await this.fetchInventoryBatch(skus);
-    
+
     return lineItems.map(li => {
       const inventory = inventoryMap[li.sku];
       if (!inventory) {
         throw new Error(`SKU not found in inventory: ${li.sku}`);
       }
-      
+
       return {
         ...li,
         description: inventory.name,
@@ -283,21 +283,21 @@ export class QuoteCalculator {
   async fetchInventoryBatch(skus) {
     const inventoryRef = collection(this.db, `artifacts/${this.appId}/public/data/inventory`);
     const inventoryMap = {};
-    
+
     // Fetch in batches to avoid Firestore limits
     const batchSize = 10;
     for (let i = 0; i < skus.length; i += batchSize) {
       const batch = skus.slice(i, i + batchSize);
       const promises = batch.map(sku => getDoc(doc(inventoryRef, sku)));
       const snaps = await Promise.all(promises);
-      
+
       snaps.forEach((snap, index) => {
         if (snap.exists()) {
           inventoryMap[batch[index]] = snap.data();
         }
       });
     }
-    
+
     return inventoryMap;
   }
 
@@ -306,11 +306,11 @@ export class QuoteCalculator {
    */
   allocateOrderCharges(lineItems, orderCharges, method = 'weight') {
     const allocations = {};
-    
+
     if (!orderCharges || !orderCharges.shipping || orderCharges.shipping <= 0) {
       return allocations;
     }
-    
+
     let totalKey = 0;
     const keys = lineItems.map(li => {
       let key;
@@ -329,7 +329,7 @@ export class QuoteCalculator {
       totalKey += key;
       return key;
     });
-    
+
     lineItems.forEach((li, index) => {
       if (totalKey > 0) {
         allocations[li.sku] = (keys[index] / totalKey) * orderCharges.shipping;
@@ -337,7 +337,7 @@ export class QuoteCalculator {
         allocations[li.sku] = orderCharges.shipping / lineItems.length;
       }
     });
-    
+
     return allocations;
   }
 
@@ -346,13 +346,13 @@ export class QuoteCalculator {
    */
   calculateItemPrices(lineItems, allocations, settings) {
     const rounding = settings.roundingDecimals || 2;
-    
+
     return lineItems.map(li => {
       // Calculate landed cost per unit
       const allocShippingPerUnit = (allocations[li.sku] || 0) / Math.max(li.quantity, 1);
       const cb = li.costComponents || {};
-      
-      const unitLandedCost = 
+
+      const unitLandedCost =
         (li.unitCost || 0) +
         (cb.inboundFreightPerUnit || 0) +
         (cb.dutyPerUnit || 0) +
@@ -360,12 +360,12 @@ export class QuoteCalculator {
         (cb.packagingPerUnit || 0) +
         (cb.otherPerUnit || 0) +
         allocShippingPerUnit;
-      
+
       // Determine markup/margin
-      const markupPercent = li.markupOverridePercent !== null 
-        ? li.markupOverridePercent 
+      const markupPercent = li.markupOverridePercent !== null
+        ? li.markupOverridePercent
         : settings.defaultMarkupPercent || 0;
-      
+
       // Calculate unit price
       let unitPrice;
       if (settings.pricingMode === 'margin') {
@@ -375,12 +375,12 @@ export class QuoteCalculator {
         // Default to markup
         unitPrice = unitLandedCost * (1 + (markupPercent / 100));
       }
-      
+
       // Round values
       const roundedLandedCost = this.round(unitLandedCost, rounding);
       const roundedUnitPrice = this.round(unitPrice, rounding);
       const lineTotal = this.round(roundedUnitPrice * li.quantity, rounding);
-      
+
       return {
         ...li,
         unitLandedCost: roundedLandedCost,
@@ -397,33 +397,33 @@ export class QuoteCalculator {
    */
   calculateTotals(lineItems, orderCharges, customerId, settings) {
     const rounding = settings.roundingDecimals || 2;
-    
+
     // Calculate subtotal
     const subTotal = lineItems.reduce((sum, li) => sum + li.lineTotal, 0);
-    
+
     // Calculate total landed cost for margin
-    const totalLandedCost = lineItems.reduce((sum, li) => 
+    const totalLandedCost = lineItems.reduce((sum, li) =>
       sum + (li.unitLandedCost * li.quantity), 0);
-    
+
     // Calculate order-level charges
     const shipping = orderCharges?.shipping || 0;
     const handling = orderCharges?.handling || 0;
     const orderDiscount = orderCharges?.orderDiscount || 0;
-    
+
     // Calculate tax (simplified - can be enhanced with tax service)
     const taxRate = this.getTaxRate(customerId, settings);
     const taxableAmount = subTotal + shipping + handling - orderDiscount;
     const tax = this.round(taxableAmount * taxRate, rounding);
-    
+
     // Calculate final total
     const total = this.round(subTotal + shipping + handling + tax - orderDiscount, rounding);
-    
+
     // Calculate gross margin percentage
     const grossMarginPercent = this.round(
-      ((subTotal - totalLandedCost) / Math.max(subTotal, 1)) * 100, 
+      ((subTotal - totalLandedCost) / Math.max(subTotal, 1)) * 100,
       2
     );
-    
+
     return {
       subTotal: this.round(subTotal, rounding),
       shipping: this.round(shipping, rounding),
@@ -456,20 +456,20 @@ export class QuoteCalculator {
    */
   validateQuote(quote) {
     const errors = [];
-    
+
     if (!quote.customerId) errors.push('Customer ID is required');
     if (!quote.lineItems || quote.lineItems.length === 0) errors.push('At least one line item is required');
-    
+
     quote.lineItems.forEach((li, index) => {
       if (!li.sku) errors.push(`Line item ${index + 1}: SKU is required`);
       if (!li.quantity || li.quantity <= 0) errors.push(`Line item ${index + 1}: Valid quantity is required`);
       if (li.unitPrice <= 0) errors.push(`Line item ${index + 1}: Unit price must be positive`);
     });
-    
+
     if (errors.length > 0) {
       throw new Error(`Quote validation failed: ${errors.join(', ')}`);
     }
-    
+
     return true;
   }
 
@@ -478,10 +478,10 @@ export class QuoteCalculator {
    */
   async saveQuote(quote) {
     this.validateQuote(quote);
-    
+
     const quoteRef = doc(this.db, `artifacts/${this.appId}/public/data/quotes`, quote.id);
     await setDoc(quoteRef, quote);
-    
+
     return quote;
   }
 
@@ -491,17 +491,17 @@ export class QuoteCalculator {
   async convertQuoteToInvoice(quoteId) {
     const quoteRef = doc(this.db, `artifacts/${this.appId}/public/data/quotes`, quoteId);
     const quoteSnap = await getDoc(quoteRef);
-    
+
     if (!quoteSnap.exists()) {
       throw new Error('Quote not found');
     }
-    
+
     const quote = quoteSnap.data();
-    
+
     if (quote.status !== 'ACCEPTED') {
       throw new Error('Only accepted quotes can be converted to invoices');
     }
-    
+
     // Create invoice with exact quote values (no recalculation)
     const invoiceId = `INV-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
     const invoiceData = {
@@ -523,17 +523,17 @@ export class QuoteCalculator {
       convertedFromQuoteId: quoteId,
       conversionDate: new Date().toISOString()
     };
-    
+
     const invoiceRef = doc(this.db, `artifacts/${this.appId}/public/data/invoices`, invoiceId);
     await setDoc(invoiceRef, invoiceData);
-    
+
     // Update quote status
-    await setDoc(quoteRef, { 
+    await setDoc(quoteRef, {
       status: 'CONVERTED',
       convertedToInvoiceId: invoiceId,
       conversionDate: new Date().toISOString()
     }, { merge: true });
-    
+
     return invoiceData;
   }
 }

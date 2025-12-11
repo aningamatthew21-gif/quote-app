@@ -5,6 +5,7 @@ import { formatCurrency } from '../utils/formatting';
 import { logInvoiceActivity } from '../utils/logger';
 import { getInvoiceDate } from '../utils/helpers';
 import { useApp } from '../context/AppContext';
+import { QuoteCalculator } from '../services/QuoteService';
 
 const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     const { userEmail, appUser } = useApp();
@@ -18,6 +19,7 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
     const [signatures, setSignatures] = useState([]);
+    const [signaturesLoading, setSignaturesLoading] = useState(true);
     const [selectedSignature, setSelectedSignature] = useState(null);
     const [notification, setNotification] = useState(null);
 
@@ -57,23 +59,30 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
         return () => unsubscribe();
     }, [db, appId, isController]); // Re-run if role changes
 
-    // Load signatures for approval
+    // Load signatures for approval (WITH SECURITY FILTER)
     useEffect(() => {
         if (!db || !appId) return;
 
         const signaturesRef = doc(db, `artifacts/${appId}/public/data/settings`, 'signatures');
         const unsubscribe = onSnapshot(signaturesRef, (docSnap) => {
             if (docSnap.exists()) {
-                setSignatures(docSnap.data().signatures || []);
+                const allSignatures = docSnap.data().signatures || [];
+
+                // SECURITY FIX: Only show signatures belonging to THIS logged-in user
+                const mySignatures = allSignatures.filter(s => s.createdBy === userId);
+
+                setSignatures(mySignatures);
             } else {
                 setSignatures([]);
             }
+            setSignaturesLoading(false);
         }, (err) => {
             console.error('Error fetching signatures:', err);
+            setSignaturesLoading(false);
         });
 
         return () => unsubscribe();
-    }, [db, appId]);
+    }, [db, appId, userId]);
 
     // Filter Logic
     const filteredInvoices = useMemo(() => {
@@ -110,67 +119,53 @@ const SalesInvoiceApproval = ({ navigateTo, db, appId, userId }) => {
     };
 
     const handleApproval = async (invoiceId, newStatus) => {
+        console.log('🔍 [DEBUG] SalesInvoiceApproval: handleApproval called', {
+            invoiceId,
+            newStatus,
+            selectedSignature: selectedSignature?.controllerName,
+            userId
+        });
+
         try {
+            // Validate signature selection for approval
             if (newStatus === 'Approved' && !selectedSignature) {
-                setNotification({ type: 'error', message: 'Please select a signature first.' });
+                console.warn('⚠️ [DEBUG] SalesInvoiceApproval: No signature selected for approval');
+                setNotification({ type: 'error', message: 'Please select a signature before approving the invoice.' });
                 return;
             }
-            const batch = writeBatch(db);
-            const invoiceRef = doc(db, `artifacts/${appId}/public/data/invoices`, invoiceId);
-            const invoice = invoices.find(inv => inv.id === invoiceId);
 
-            const updateData = {
+            // Instatiate Service
+            const quoteService = new QuoteCalculator(db, appId);
+
+            // Execute Approval via Service
+            await quoteService.approveInvoice(invoiceId, {
                 status: newStatus,
-            };
+                signature: newStatus === 'Approved' ? selectedSignature : null
+            }, userId);
 
-            if (newStatus === 'Approved' && selectedSignature) {
-                updateData.controllerSignature = selectedSignature.signatureUrl;
-                updateData.controllerName = selectedSignature.controllerName;
-                updateData.controllerSubsidiary = selectedSignature.subsidiary;
-                updateData.signatureTimestamp = new Date().toISOString();
-                updateData.approvedBy = userId;
-            }
+            // Optimistic UI Update - IMMEDIATE REMOVAL
+            setInvoices(currentInvoices => currentInvoices.filter(inv => inv.id !== invoiceId));
 
-            batch.update(invoiceRef, updateData);
-
-            // OPTIMIZED STOCK DEDUCTION
-            if (newStatus === 'Approved' && invoice) {
-                const itemsArray = invoice.items || invoice.lineItems || [];
-
-                console.log('📦 [DEBUG] Optimizing Stock Deduction for:', itemsArray.length, 'items');
-
-                itemsArray.forEach(item => {
-                    if (item.id && item.type !== 'sourced') { // Don't deduct stock for sourced items/services
-                        const invItemRef = doc(db, `artifacts/${appId}/public/data/inventory`, item.id);
-
-                        // MAGIC LINE: Atomic decrement. 
-                        // It subtracts quantity regardless of what the current number is. Safe against race conditions.
-                        batch.update(invItemRef, {
-                            stock: increment(-Math.abs(Number(item.quantity) || 0))
-                        });
-                    }
-                });
-            }
-
-            await batch.commit();
-
-            // Optimistic UI Update
-            setInvoices(prevInvoices => prevInvoices.filter(inv => inv.id !== invoiceId));
-
-            await logInvoiceActivity(db, appId, userId, newStatus === 'Approved' ? 'Approved' : 'Rejected', invoice, {
+            // Log activity after successful update (non-blocking)
+            const invoice = invoices.find(inv => inv.id === invoiceId);
+            logInvoiceActivity(db, appId, userId, newStatus === 'Approved' ? 'Approved' : 'Rejected', invoice, {
                 statusBefore: 'Pending Approval',
                 statusAfter: newStatus,
                 approvedBy: userId,
                 approvalDate: new Date().toISOString(),
                 totalValue: invoice?.total || 0,
                 itemCount: invoice?.lineItems?.length || 0
-            });
+            }).catch(err => console.error("Logging failed", err));
 
-            setNotification({ type: 'success', message: `Invoice ${newStatus} successfully` });
+            setNotification({ type: 'success', message: `Invoice approved and sent to customer.` });
             setTimeout(() => setNotification(null), 3000);
-        } catch (e) {
-            console.error(e);
-            setNotification({ type: 'error', message: 'Action failed' });
+
+        } catch (error) {
+            console.error('❌ [ERROR] SalesInvoiceApproval: handleApproval failed:', error);
+            setNotification({
+                type: 'error',
+                message: `Failed to ${newStatus.toLowerCase()} invoice. Error: ${error.message}`
+            });
         }
     };
 
